@@ -20,7 +20,7 @@ from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 
-class SlackStack(Stack):
+class SlackIntegrationStack(Stack):
     """Stack for Slack integration infrastructure."""
 
     def __init__(

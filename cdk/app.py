@@ -2,8 +2,8 @@
 import os
 
 import aws_cdk as cdk
-from agentcore_runtime import MynionStack
-from slack_stack import SlackStack
+from agentcore_runtime import AgentCoreStack
+from slack_stack import SlackIntegrationStack
 
 app = cdk.App()
 
@@ -13,26 +13,26 @@ env = cdk.Environment(
     region="ap-northeast-1",
 )
 
-# Create the Mynion AgentCore Runtime stack
-mynion_stack = MynionStack(
+# Create the AgentCore Runtime stack
+agentcore_stack = AgentCoreStack(
     app,
-    "MynionStack",
+    "AgentCoreStack",
     env=env,
     description="Stack for deploying Mynion Strands Agent to AWS Bedrock AgentCore Runtime",
 )
 
 # Create the Slack integration stack
-# This stack depends on the Mynion stack for runtime ID and endpoint ARN
-slack_stack = SlackStack(
+# This stack depends on the AgentCore stack for runtime ID and endpoint ARN
+slack_integration_stack = SlackIntegrationStack(
     app,
-    "MynionSlackStack",
-    agentcore_runtime_id=mynion_stack.agent_runtime_id,
-    agentcore_endpoint_arn=mynion_stack.prod_endpoint.agent_runtime_endpoint_arn,
+    "SlackIntegrationStack",
+    agentcore_runtime_id=agentcore_stack.agent_runtime_id,
+    agentcore_endpoint_arn=agentcore_stack.prod_endpoint.agent_runtime_endpoint_arn,
     env=env,
     description="Stack for Slack integration with Mynion AgentCore Runtime",
 )
 
 # Add explicit dependency
-slack_stack.add_dependency(mynion_stack)
+slack_integration_stack.add_dependency(agentcore_stack)
 
 app.synth()

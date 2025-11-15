@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+
 import aws_cdk as cdk
 from agentcore_runtime import MynionStack
 from slack_stack import SlackStack

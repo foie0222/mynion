@@ -8,13 +8,14 @@ This function:
 4. Sends responses back to Slack
 """
 
-import os
 import json
 import logging
+import os
 import re
-from typing import Dict, Any, Optional
-import httpx
+from typing import Any
+
 import boto3
+import httpx
 
 # Configure logging
 logger = logging.getLogger()
@@ -30,10 +31,10 @@ AGENTCORE_RUNTIME_ENDPOINT = os.environ.get("AGENTCORE_RUNTIME_ENDPOINT", "")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
 
 # Cache for Slack credentials
-_slack_credentials: Optional[Dict[str, str]] = None
+_slack_credentials: dict[str, str] | None = None
 
 
-def get_slack_credentials() -> Dict[str, str]:
+def get_slack_credentials() -> dict[str, str]:
     """
     Get Slack credentials from Secrets Manager.
     Cached for container lifecycle to improve performance.
@@ -47,12 +48,13 @@ def get_slack_credentials() -> Dict[str, str]:
         return _slack_credentials
 
     try:
-        logger.info(f"Loading Slack credentials from Secrets Manager")
+        logger.info("Loading Slack credentials from Secrets Manager")
         response = secretsmanager_client.get_secret_value(SecretId=SLACK_SECRET_ARN)
         secret_string = response.get("SecretString", "{}")
-        _slack_credentials = json.loads(secret_string)
+        credentials: dict[str, str] = json.loads(secret_string)
+        _slack_credentials = credentials
         logger.info("Slack credentials loaded successfully")
-        return _slack_credentials
+        return credentials
     except Exception as e:
         logger.error(f"Error loading Slack credentials: {str(e)}", exc_info=True)
         # Fallback to environment variables for local testing
@@ -68,9 +70,7 @@ class SlackClient:
         self.bot_token = bot_token
         self.base_url = "https://slack.com/api"
 
-    def post_message(
-        self, channel: str, text: str, thread_ts: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def post_message(self, channel: str, text: str, thread_ts: str | None = None) -> dict[str, Any]:
         """
         Post a message to Slack channel.
 
@@ -117,7 +117,7 @@ class SlackClient:
 
     def post_button_message(
         self, channel: str, text: str, button_text: str, button_url: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Post a message with a button (used for OAuth flow).
 
@@ -199,7 +199,7 @@ def clean_message(text: str) -> str:
     return cleaned
 
 
-def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     """
     Lambda Worker handler.
 
@@ -259,9 +259,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Session ID based on thread (1 thread = 1 session)
         session_id = f"slack-{thread_id}" if thread_id else f"slack-new-{user_id}"
 
-        logger.info(
-            f"Invoking AgentCore: user_id={agentcore_user_id}, session_id={session_id}"
-        )
+        logger.info(f"Invoking AgentCore: user_id={agentcore_user_id}, session_id={session_id}")
 
         # TODO: Invoke AgentCore Runtime
         # For now, send a placeholder response

@@ -8,9 +8,9 @@ This client handles:
 4. Session management
 """
 
-import json
 import logging
-from typing import Dict, Any
+from typing import Any
+
 import boto3
 from botocore.config import Config
 
@@ -49,9 +49,7 @@ class AgentCoreClient:
             config=config,
         )
 
-    def invoke_agent(
-        self, user_id: str, session_id: str, input_text: str
-    ) -> Dict[str, Any]:
+    def invoke_agent(self, user_id: str, session_id: str, input_text: str) -> dict[str, Any]:
         """
         Invoke the AgentCore Runtime with user context.
 
@@ -89,7 +87,7 @@ class AgentCoreClient:
                 # - custom header configuration
             )
 
-            logger.info(f"Agent response received")
+            logger.info("Agent response received")
 
             # Parse the EventStream response
             agent_output = self._parse_agent_response(response)
@@ -142,7 +140,7 @@ class AgentCoreClient:
         # For now, return a placeholder
         return "production"
 
-    def _parse_agent_response(self, response: Dict[str, Any]) -> str:
+    def _parse_agent_response(self, response: dict[str, Any]) -> str:
         """
         Parse the agent response from Bedrock EventStream.
 
@@ -186,4 +184,6 @@ class AgentCoreClient:
         """
         # TODO: Implement actual OAuth URL retrieval
         # This should come from AgentCore Identity provider
-        return "https://bedrock-agentcore.ap-northeast-1.amazonaws.com/identities/oauth2/authorize?..."
+        return (
+            "https://bedrock-agentcore.ap-northeast-1.amazonaws.com/identities/oauth2/authorize?..."
+        )

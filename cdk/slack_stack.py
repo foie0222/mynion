@@ -10,16 +10,13 @@ This stack creates:
 """
 
 from pathlib import Path
-from aws_cdk import (
-    Stack,
-    Duration,
-    CfnOutput,
-    aws_lambda as lambda_,
-    aws_apigateway as apigw,
-    aws_secretsmanager as secretsmanager,
-    aws_iam as iam,
-    aws_logs as logs,
-)
+
+from aws_cdk import CfnOutput, Duration, Stack
+from aws_cdk import aws_apigateway as apigw
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_lambda as lambda_
+from aws_cdk import aws_logs as logs
+from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 
@@ -48,9 +45,6 @@ class SlackStack(Stack):
 
         self.agentcore_runtime_id = agentcore_runtime_id
         self.agentcore_endpoint_arn = agentcore_endpoint_arn
-
-        # Get app directory path
-        app_dir = Path(__file__).parent.parent / "app" / "slack"
 
         # Create Secrets Manager secret for Slack credentials
         slack_secret = self._create_slack_secret()
@@ -137,6 +131,13 @@ class SlackStack(Stack):
         # Secrets Manager read permissions
         slack_secret.grant_read(worker_role)
 
+        # Create CloudWatch Log Group for Worker Lambda
+        worker_log_group = logs.LogGroup(
+            self,
+            "WorkerLambdaLogGroup",
+            retention=logs.RetentionDays.ONE_WEEK,
+        )
+
         # Create Lambda function from Docker image
         worker_lambda = lambda_.DockerImageFunction(
             self,
@@ -148,10 +149,9 @@ class SlackStack(Stack):
             environment={
                 "AGENTCORE_RUNTIME_ID": self.agentcore_runtime_id,
                 "AGENTCORE_RUNTIME_ENDPOINT": self.agentcore_endpoint_arn,
-                "AWS_REGION": Stack.of(self).region,
                 "SLACK_SECRET_ARN": slack_secret.secret_arn,
             },
-            log_retention=logs.RetentionDays.ONE_WEEK,
+            log_group=worker_log_group,
         )
 
         # Grant permission to read Slack credentials
@@ -198,6 +198,13 @@ class SlackStack(Stack):
         # Secrets Manager read permissions
         slack_secret.grant_read(receiver_role)
 
+        # Create CloudWatch Log Group for Receiver Lambda
+        receiver_log_group = logs.LogGroup(
+            self,
+            "ReceiverLambdaLogGroup",
+            retention=logs.RetentionDays.ONE_WEEK,
+        )
+
         # Create Lambda function
         receiver_lambda = lambda_.Function(
             self,
@@ -212,14 +219,12 @@ class SlackStack(Stack):
                 "WORKER_LAMBDA_ARN": worker_lambda.function_arn,
                 "SLACK_SECRET_ARN": slack_secret.secret_arn,
             },
-            log_retention=logs.RetentionDays.ONE_WEEK,
+            log_group=receiver_log_group,
         )
 
         return receiver_lambda
 
-    def _create_api_gateway(
-        self, receiver_lambda: lambda_.Function
-    ) -> apigw.RestApi:
+    def _create_api_gateway(self, receiver_lambda: lambda_.Function) -> apigw.RestApi:
         """
         Create API Gateway for Slack webhooks.
 
@@ -271,9 +276,7 @@ class SlackStack(Stack):
 
         return api
 
-    def _create_outputs(
-        self, api: apigw.RestApi, slack_secret: secretsmanager.Secret
-    ):
+    def _create_outputs(self, api: apigw.RestApi, slack_secret: secretsmanager.Secret):
         """
         Create CloudFormation outputs.
 

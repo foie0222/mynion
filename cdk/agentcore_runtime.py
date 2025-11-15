@@ -1,11 +1,9 @@
 from pathlib import Path
-from aws_cdk import (
-    Stack,
-    CfnOutput,
-    aws_iam as iam,
-)
-from constructs import Construct
+
+from aws_cdk import CfnOutput, Stack
 from aws_cdk import aws_bedrock_agentcore_alpha as agentcore
+from aws_cdk import aws_iam as iam
+from constructs import Construct
 
 
 class MynionStack(Stack):
@@ -82,9 +80,7 @@ class MynionStack(Stack):
             iam.PolicyStatement(
                 actions=["cloudwatch:PutMetricData"],
                 resources=["*"],
-                conditions={
-                    "StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}
-                },
+                conditions={"StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}},
             )
         )
 
@@ -106,8 +102,8 @@ class MynionStack(Stack):
 
         # Create the agent runtime artifact from local Docker context
         # This will build the Docker image from the Dockerfile and push it to ECR
-        agent_runtime_artifact = agentcore.AgentRuntimeArtifact.from_asset(
-            str(agent_dir)
+        agent_runtime_artifact: agentcore.AgentRuntimeArtifact = (
+            agentcore.AgentRuntimeArtifact.from_asset(str(agent_dir))
         )
 
         # Create the AgentCore Runtime

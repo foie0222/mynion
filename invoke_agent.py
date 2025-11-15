@@ -8,10 +8,11 @@ Example:
     python invoke_agent.py arn:aws:bedrock-agentcore:ap-northeast-1:123456789012:runtime/mynion-agent-xxx "機械学習を簡単に説明してください"
 """
 
-import sys
-import boto3
 import json
+import sys
 import uuid
+
+import boto3
 
 
 def invoke_agent(runtime_arn: str, prompt: str, qualifier: str = "production"):

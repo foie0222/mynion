@@ -5,13 +5,14 @@ This function handles Slack events and immediately returns 200 OK within 3 secon
 then asynchronously invokes the Worker Lambda for actual processing.
 """
 
-import os
-import json
 import hashlib
 import hmac
-import time
+import json
 import logging
-from typing import Dict, Any, Optional
+import os
+import time
+from typing import Any
+
 import boto3
 
 # Configure logging
@@ -27,10 +28,10 @@ SLACK_SECRET_ARN = os.environ.get("SLACK_SECRET_ARN", "")
 WORKER_LAMBDA_ARN = os.environ.get("WORKER_LAMBDA_ARN", "")
 
 # Cache for Slack credentials (loaded once per container lifecycle)
-_slack_credentials: Optional[Dict[str, str]] = None
+_slack_credentials: dict[str, str] | None = None
 
 
-def get_slack_credentials() -> Dict[str, str]:
+def get_slack_credentials() -> dict[str, str]:
     """
     Get Slack credentials from Secrets Manager.
     Cached for container lifecycle to improve performance.
@@ -47,9 +48,10 @@ def get_slack_credentials() -> Dict[str, str]:
         logger.info(f"Loading Slack credentials from Secrets Manager: {SLACK_SECRET_ARN}")
         response = secretsmanager_client.get_secret_value(SecretId=SLACK_SECRET_ARN)
         secret_string = response.get("SecretString", "{}")
-        _slack_credentials = json.loads(secret_string)
+        credentials: dict[str, str] = json.loads(secret_string)
+        _slack_credentials = credentials
         logger.info("Slack credentials loaded successfully")
-        return _slack_credentials
+        return credentials
     except Exception as e:
         logger.error(f"Error loading Slack credentials: {str(e)}", exc_info=True)
         # Fallback to environment variables for local testing
@@ -59,7 +61,7 @@ def get_slack_credentials() -> Dict[str, str]:
         }
 
 
-def verify_slack_request(event: Dict[str, Any]) -> bool:
+def verify_slack_request(event: dict[str, Any]) -> bool:
     """
     Verify that the request came from Slack using the signing secret.
 
@@ -100,11 +102,14 @@ def verify_slack_request(event: Dict[str, Any]) -> bool:
 
         # Compute the signature
         sig_basestring = f"v0:{slack_request_timestamp}:{body}"
-        computed_signature = "v0=" + hmac.new(
-            signing_secret.encode(),
-            sig_basestring.encode(),
-            hashlib.sha256,
-        ).hexdigest()
+        computed_signature = (
+            "v0="
+            + hmac.new(
+                signing_secret.encode(),
+                sig_basestring.encode(),
+                hashlib.sha256,
+            ).hexdigest()
+        )
 
         # Compare signatures
         if not hmac.compare_digest(computed_signature, slack_signature):
@@ -118,7 +123,7 @@ def verify_slack_request(event: Dict[str, Any]) -> bool:
         return False
 
 
-def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     """
     Lambda Receiver handler.
 
@@ -235,10 +240,12 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             return {
                 "statusCode": 200,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({
-                    "response_type": "in_channel",
-                    "text": "処理中です。少々お待ちください...",
-                }),
+                "body": json.dumps(
+                    {
+                        "response_type": "in_channel",
+                        "text": "処理中です。少々お待ちください...",
+                    }
+                ),
             }
 
         # Unknown event type

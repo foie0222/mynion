@@ -10,4 +10,7 @@ dependencies = [
     "pydantic>=2.12.4",
     "strands-agents>=1.15.0",
     "uvicorn[standard]>=0.38.0",
+    # Slack integration dependencies
+    "slack-bolt>=1.21.4",
+    "boto3>=1.37.8",
 ]

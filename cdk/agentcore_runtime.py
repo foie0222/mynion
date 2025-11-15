@@ -111,7 +111,7 @@ class MynionStack(Stack):
         )
 
         # Create the AgentCore Runtime
-        runtime = agentcore.Runtime(
+        self.runtime = agentcore.Runtime(
             self,
             "MynionRuntime",
             runtime_name="mynion_agent",
@@ -124,17 +124,20 @@ class MynionStack(Stack):
         )
 
         # Create a production endpoint pointing to version 1
-        prod_endpoint = runtime.add_endpoint(
+        self.prod_endpoint = self.runtime.add_endpoint(
             "production",
             version="1",
             description="Production endpoint for Mynion agent",
         )
 
+        # Expose runtime ID for other stacks
+        self.agent_runtime_id = self.runtime.agent_runtime_id
+
         # Output important information
         CfnOutput(
             self,
             "RuntimeArn",
-            value=runtime.agent_runtime_arn,
+            value=self.runtime.agent_runtime_arn,
             description="ARN of the Mynion AgentCore Runtime",
             export_name=f"{Stack.of(self).stack_name}-RuntimeArn",
         )
@@ -142,7 +145,7 @@ class MynionStack(Stack):
         CfnOutput(
             self,
             "RuntimeId",
-            value=runtime.agent_runtime_id,
+            value=self.agent_runtime_id,
             description="ID of the Mynion AgentCore Runtime",
             export_name=f"{Stack.of(self).stack_name}-RuntimeId",
         )
@@ -150,7 +153,7 @@ class MynionStack(Stack):
         CfnOutput(
             self,
             "ProductionEndpointArn",
-            value=prod_endpoint.agent_runtime_endpoint_arn,
+            value=self.prod_endpoint.agent_runtime_endpoint_arn,
             description="ARN of the production endpoint",
             export_name=f"{Stack.of(self).stack_name}-ProductionEndpointArn",
         )

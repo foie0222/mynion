@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from typing import Any
 
 import boto3
@@ -30,6 +31,9 @@ SLACK_SECRET_ARN = os.environ.get("SLACK_SECRET_ARN", "")
 AGENTCORE_RUNTIME_ID = os.environ.get("AGENTCORE_RUNTIME_ID", "")
 AGENTCORE_RUNTIME_ENDPOINT = os.environ.get("AGENTCORE_RUNTIME_ENDPOINT", "")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
+
+# Slack session namespace for UUID v5 generation (fixed, never change)
+SLACK_SESSION_NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-5678-9abc-def012345678")
 
 # Cache for Slack credentials
 _slack_credentials: dict[str, str] | None = None
@@ -254,11 +258,10 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             return {"statusCode": 200, "body": "Empty message"}
 
         # Generate IDs for AgentCore
-        # User ID for AgentCore Identity (token vault)
         agentcore_user_id = f"slack-{team_id}-{user_id}"
 
-        # Session ID based on thread (1 thread = 1 session)
-        session_id = f"slack-{thread_id}" if thread_id else f"slack-new-{user_id}"
+        # Generate session ID using UUID v5 (min 33 chars required by AgentCore)
+        session_id = str(uuid.uuid5(SLACK_SESSION_NAMESPACE, thread_id))
 
         logger.info(f"Invoking AgentCore: user_id={agentcore_user_id}, session_id={session_id}")
 

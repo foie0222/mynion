@@ -80,12 +80,9 @@ def verify_slack_request(event: dict[str, Any]) -> bool:
             logger.error("SLACK_SIGNING_SECRET not found in credentials")
             return False
 
-        # Get headers (handle both direct and proxy integration formats)
         headers = event.get("headers", {})
-
-        # Slack sends headers in lowercase
-        slack_signature = headers.get("x-slack-signature", "")
-        slack_request_timestamp = headers.get("x-slack-request-timestamp", "")
+        slack_signature = headers.get("X-Slack-Signature", "")
+        slack_request_timestamp = headers.get("X-Slack-Request-Timestamp", "")
 
         if not slack_signature or not slack_request_timestamp:
             logger.warning("Missing Slack signature or timestamp")

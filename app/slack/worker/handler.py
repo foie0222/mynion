@@ -16,6 +16,7 @@ from typing import Any
 
 import boto3
 import httpx
+from agent_client import AgentCoreClient
 
 # Configure logging
 logger = logging.getLogger()
@@ -261,16 +262,36 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
         logger.info(f"Invoking AgentCore: user_id={agentcore_user_id}, session_id={session_id}")
 
-        # TODO: Invoke AgentCore Runtime
-        # For now, send a placeholder response
-        agent_response = f"[開発中] メッセージを受信しました: {user_message}\n\nUser: {agentcore_user_id}\nSession: {session_id}"
-
-        # Send response to Slack
-        slack_client.post_message(
-            channel=channel_id,
-            text=agent_response,
-            thread_ts=thread_ts,
+        # Initialize AgentCore client
+        agent_client = AgentCoreClient(
+            endpoint_arn=AGENTCORE_RUNTIME_ENDPOINT,
+            region=AWS_REGION,
         )
+
+        # Invoke AgentCore Runtime
+        result = agent_client.invoke_agent(
+            user_id=agentcore_user_id,
+            session_id=session_id,
+            input_text=user_message,
+        )
+
+        # Handle response
+        if result.get("requires_auth"):
+            # OAuth authentication required
+            slack_client.post_button_message(
+                channel=channel_id,
+                text="認証が必要です。以下のボタンをクリックして認証してください。",
+                button_text="認証する",
+                button_url="https://example.com/oauth",  # TODO: Get actual OAuth URL
+            )
+        else:
+            # Send agent response to Slack
+            agent_response = result.get("output", "応答がありませんでした。")
+            slack_client.post_message(
+                channel=channel_id,
+                text=agent_response,
+                thread_ts=thread_ts,
+            )
 
         logger.info("Successfully sent response to Slack")
         return {"statusCode": 200, "body": "Success"}

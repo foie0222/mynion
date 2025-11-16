@@ -119,15 +119,9 @@ class AgentCoreStack(Stack):
             network_configuration=agentcore.RuntimeNetworkConfiguration.using_public_network(),
         )
 
-        # Create a production endpoint pointing to version 1
-        self.prod_endpoint = self.runtime.add_endpoint(
-            "production",
-            version="1",
-            description="Production endpoint for Mynion agent",
-        )
-
-        # Expose runtime ID for other stacks
+        # Expose runtime properties for other stacks
         self.agent_runtime_id = self.runtime.agent_runtime_id
+        self.agent_runtime_arn = self.runtime.agent_runtime_arn
 
         # Output important information
         CfnOutput(
@@ -144,12 +138,4 @@ class AgentCoreStack(Stack):
             value=self.agent_runtime_id,
             description="ID of the Mynion AgentCore Runtime",
             export_name=f"{Stack.of(self).stack_name}-RuntimeId",
-        )
-
-        CfnOutput(
-            self,
-            "ProductionEndpointArn",
-            value=self.prod_endpoint.agent_runtime_endpoint_arn,
-            description="ARN of the production endpoint",
-            export_name=f"{Stack.of(self).stack_name}-ProductionEndpointArn",
         )

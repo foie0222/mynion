@@ -22,12 +22,12 @@ agentcore_stack = AgentCoreStack(
 )
 
 # Create the Slack integration stack
-# This stack depends on the AgentCore stack for runtime ID and endpoint ARN
+# This stack depends on the AgentCore stack for runtime ID and ARN
 slack_integration_stack = SlackIntegrationStack(
     app,
     "SlackIntegrationStack",
     agentcore_runtime_id=agentcore_stack.agent_runtime_id,
-    agentcore_endpoint_arn=agentcore_stack.prod_endpoint.agent_runtime_endpoint_arn,
+    agentcore_endpoint_arn=agentcore_stack.agent_runtime_arn,
     env=env,
     description="Stack for Slack integration with Mynion AgentCore Runtime",
 )

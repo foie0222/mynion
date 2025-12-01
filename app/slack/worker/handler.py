@@ -120,74 +120,6 @@ class SlackClient:
             logger.error(f"Error posting to Slack: {str(e)}", exc_info=True)
             raise
 
-    def post_button_message(
-        self, channel: str, text: str, button_text: str, button_url: str
-    ) -> dict[str, Any]:
-        """
-        Post a message with a button (used for OAuth flow).
-
-        Args:
-            channel: Slack channel ID
-            text: Message text
-            button_text: Button label
-            button_url: Button URL
-
-        Returns:
-            Slack API response
-        """
-        try:
-            payload = {
-                "channel": channel,
-                "text": text,
-                "blocks": [
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": text,
-                        },
-                    },
-                    {
-                        "type": "actions",
-                        "elements": [
-                            {
-                                "type": "button",
-                                "text": {
-                                    "type": "plain_text",
-                                    "text": button_text,
-                                },
-                                "url": button_url,
-                                "style": "primary",
-                            }
-                        ],
-                    },
-                ],
-            }
-
-            with httpx.Client() as client:
-                response = client.post(
-                    f"{self.base_url}/chat.postMessage",
-                    headers={
-                        "Authorization": f"Bearer {self.bot_token}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                    timeout=10.0,
-                )
-
-                response.raise_for_status()
-                result = response.json()
-
-                if not result.get("ok"):
-                    logger.error(f"Slack API error: {result.get('error')}")
-                    raise Exception(f"Slack API error: {result.get('error')}")
-
-                return result
-
-        except Exception as e:
-            logger.error(f"Error posting button to Slack: {str(e)}", exc_info=True)
-            raise
-
 
 def clean_message(text: str) -> str:
     """
@@ -242,16 +174,9 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         channel_id = event.get("channel_id", "")
         thread_id = event.get("thread_id", "")
 
-        # Extract user message
-        if "command" in event:
-            # Slash command
-            user_message = event.get("text", "")
-            thread_ts = None  # Slash commands don't have threads initially
-        else:
-            # Event callback (app_mention, message, etc.)
-            user_message = slack_event.get("text", "")
-            user_message = clean_message(user_message)
-            thread_ts = slack_event.get("ts")  # Reply in thread
+        # Event callback (app_mention, message, etc.)
+        user_message = clean_message(slack_event.get("text", ""))
+        thread_ts = slack_event.get("ts")  # Reply in thread
 
         if not user_message:
             logger.warning("Empty user message, skipping")
@@ -278,23 +203,24 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             input_text=user_message,
         )
 
-        # Handle response
-        if result.get("requires_auth"):
-            # OAuth authentication required
-            slack_client.post_button_message(
-                channel=channel_id,
-                text="認証が必要です。以下のボタンをクリックして認証してください。",
-                button_text="認証する",
-                button_url="https://example.com/oauth",  # TODO: Get actual OAuth URL
-            )
+        # Send agent response to Slack
+        # Extract text from nested response structure:
+        # {"output": {"message": {"content": [{"text": "..."}]}}}
+        output = result.get("output", {})
+        if isinstance(output, dict):
+            message = output.get("message", {})
+            content = message.get("content", [])
+            if content and isinstance(content, list) and len(content) > 0:
+                agent_response = content[0].get("text", "応答がありませんでした。")
+            else:
+                agent_response = "応答がありませんでした。"
         else:
-            # Send agent response to Slack
-            agent_response = result.get("output", "応答がありませんでした。")
-            slack_client.post_message(
-                channel=channel_id,
-                text=agent_response,
-                thread_ts=thread_ts,
-            )
+            agent_response = str(output) if output else "応答がありませんでした。"
+        slack_client.post_message(
+            channel=channel_id,
+            text=agent_response,
+            thread_ts=thread_ts,
+        )
 
         logger.info("Successfully sent response to Slack")
         return {"statusCode": 200, "body": "Success"}

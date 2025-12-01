@@ -204,18 +204,20 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         )
 
         # Send agent response to Slack
-        # Extract text from nested response structure:
-        # {"output": {"message": {"content": [{"text": "..."}]}}}
-        output = result.get("output", {})
-        if isinstance(output, dict):
-            message = output.get("message", {})
-            content = message.get("content", [])
-            if content and isinstance(content, list) and len(content) > 0:
-                agent_response = content[0].get("text", "応答がありませんでした。")
-            else:
-                agent_response = "応答がありませんでした。"
+        logger.info(f"Agent result: {json.dumps(result, default=str)}")
+
+        if isinstance(result, str):
+            # Streaming response - already a string
+            agent_response = result if result else "応答がありませんでした。"
         else:
-            agent_response = str(output) if output else "応答がありませんでした。"
+            # JSON response - extract text from nested structure:
+            # {"output": {"message": {"content": [{"text": "..."}]}}}
+            agent_response = (
+                result.get("output", {})
+                .get("message", {})
+                .get("content", [{}])[0]
+                .get("text", "応答がありませんでした。")
+            )
         slack_client.post_message(
             channel=channel_id,
             text=agent_response,

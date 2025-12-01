@@ -41,7 +41,7 @@ class AgentCoreClient:
             config=config,
         )
 
-    def invoke_agent(self, user_id: str, session_id: str, input_text: str) -> dict[str, Any]:
+    def invoke_agent(self, user_id: str, session_id: str, input_text: str) -> dict[str, Any] | str:
         """
         Invoke the AgentCore Runtime.
 
@@ -51,7 +51,7 @@ class AgentCoreClient:
             input_text: User's input message
 
         Returns:
-            Agent response with output text and metadata
+            Response from AgentCore Runtime
         """
         try:
             logger.info(f"Invoking agent: session={session_id}, user={user_id}")
@@ -66,34 +66,22 @@ class AgentCoreClient:
 
             logger.info("Agent response received")
 
-            agent_output = self._parse_streaming_response(response)
-
-            return {
-                "output": agent_output,
-                "requires_auth": False,
-                "session_id": session_id,
-            }
-
-        except self.client.exceptions.AccessDeniedException as e:
-            logger.error(f"Access denied - may need OAuth: {str(e)}")
-            return {
-                "requires_auth": True,
-                "error": str(e),
-            }
+            # Parse and return the response directly (no wrapper)
+            return self._parse_response(response)
 
         except Exception as e:
             logger.error(f"Error invoking agent: {str(e)}", exc_info=True)
             raise
 
-    def _parse_streaming_response(self, response: dict[str, Any]) -> str:
+    def _parse_response(self, response: dict[str, Any]) -> dict[str, Any] | str:
         """
-        Parse streaming response from AgentCore Runtime.
+        Parse response from AgentCore Runtime.
 
         Args:
             response: Response from invoke_agent_runtime API
 
         Returns:
-            Complete response text
+            Parsed response (str for streaming, dict for JSON)
         """
         try:
             content_type = response.get("contentType", "")

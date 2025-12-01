@@ -120,6 +120,49 @@ class SlackClient:
             logger.error(f"Error posting to Slack: {str(e)}", exc_info=True)
             raise
 
+    def update_message(self, channel: str, ts: str, text: str) -> dict[str, Any]:
+        """
+        Update an existing message in Slack channel.
+
+        Args:
+            channel: Slack channel ID
+            ts: Timestamp of the message to update
+            text: New message text
+
+        Returns:
+            Slack API response
+        """
+        try:
+            payload = {
+                "channel": channel,
+                "ts": ts,
+                "text": text,
+            }
+
+            with httpx.Client() as client:
+                response = client.post(
+                    f"{self.base_url}/chat.update",
+                    headers={
+                        "Authorization": f"Bearer {self.bot_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=10.0,
+                )
+
+                response.raise_for_status()
+                result = response.json()
+
+                if not result.get("ok"):
+                    logger.error(f"Slack API error: {result.get('error')}")
+                    raise Exception(f"Slack API error: {result.get('error')}")
+
+                return result
+
+        except Exception as e:
+            logger.error(f"Error updating Slack message: {str(e)}", exc_info=True)
+            raise
+
 
 def clean_message(text: str) -> str:
     """
@@ -190,6 +233,14 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
         logger.info(f"Invoking AgentCore: user_id={agentcore_user_id}, session_id={session_id}")
 
+        # Send "thinking" message first to provide immediate feedback
+        thinking_response = slack_client.post_message(
+            channel=channel_id,
+            text="考え中...",
+            thread_ts=thread_ts,
+        )
+        thinking_ts = thinking_response.get("ts")
+
         # Initialize AgentCore client
         agent_client = AgentCoreClient(
             endpoint_arn=AGENTCORE_RUNTIME_ENDPOINT,
@@ -203,7 +254,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             input_text=user_message,
         )
 
-        # Send agent response to Slack
+        # Extract agent response
         logger.info(f"Agent result: {json.dumps(result, default=str)}")
 
         if isinstance(result, str):
@@ -218,13 +269,15 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 .get("content", [{}])[0]
                 .get("text", "応答がありませんでした。")
             )
-        slack_client.post_message(
+
+        # Update the "thinking" message with actual response
+        slack_client.update_message(
             channel=channel_id,
+            ts=thinking_ts,
             text=agent_response,
-            thread_ts=thread_ts,
         )
 
-        logger.info("Successfully sent response to Slack")
+        logger.info("Successfully updated response in Slack")
         return {"statusCode": 200, "body": "Success"}
 
     except Exception as e:

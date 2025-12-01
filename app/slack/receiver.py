@@ -203,48 +203,6 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "body": json.dumps({"ok": True}),
             }
 
-        # Handle slash commands
-        if "command" in body:
-            # Extract user and team IDs
-            user_id = body.get("user_id", "")
-            team_id = body.get("team_id", "")
-            channel_id = body.get("channel_id", "")
-
-            # For slash commands, generate a unique thread_id based on trigger_id
-            # This creates a new session for each slash command invocation
-            thread_id = body.get("trigger_id", "")
-
-            # Prepare payload for Worker Lambda
-            worker_payload = {
-                "command": body.get("command", ""),
-                "text": body.get("text", ""),
-                "user_id": user_id,
-                "team_id": team_id,
-                "channel_id": channel_id,
-                "thread_id": thread_id,
-                "response_url": body.get("response_url", ""),
-            }
-
-            # Invoke Worker Lambda asynchronously
-            logger.info(f"Invoking Worker Lambda for slash command: {worker_payload}")
-            lambda_client.invoke(
-                FunctionName=WORKER_LAMBDA_ARN,
-                InvocationType="Event",
-                Payload=json.dumps(worker_payload),
-            )
-
-            # Return immediate acknowledgment
-            return {
-                "statusCode": 200,
-                "headers": {"Content-Type": "application/json"},
-                "body": json.dumps(
-                    {
-                        "response_type": "in_channel",
-                        "text": "処理中です。少々お待ちください...",
-                    }
-                ),
-            }
-
         # Unknown event type
         logger.warning(f"Unknown event type: {event_type}")
         return {

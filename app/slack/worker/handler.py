@@ -17,7 +17,8 @@ from typing import Any
 
 import boto3
 import httpx
-from agent_client import AgentCoreClient
+
+from app.slack.worker.agent_client import AgentCoreClient
 
 # Configure logging
 logger = logging.getLogger()
@@ -108,7 +109,7 @@ class SlackClient:
                 )
 
                 response.raise_for_status()
-                result = response.json()
+                result: dict[str, Any] = response.json()
 
                 if not result.get("ok"):
                     logger.error(f"Slack API error: {result.get('error')}")
@@ -151,7 +152,7 @@ class SlackClient:
                 )
 
                 response.raise_for_status()
-                result = response.json()
+                result: dict[str, Any] = response.json()
 
                 if not result.get("ok"):
                     logger.error(f"Slack API error: {result.get('error')}")
@@ -239,7 +240,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             text="考え中...",
             thread_ts=thread_ts,
         )
-        thinking_ts = thinking_response.get("ts")
+        thinking_ts: str = thinking_response.get("ts", "")
 
         # Initialize AgentCore client
         agent_client = AgentCoreClient(

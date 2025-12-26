@@ -105,7 +105,8 @@ class AgentCoreClient:
                 content = []
                 for chunk in response.get("response", []):
                     content.append(chunk.decode("utf-8"))
-                return json.loads("".join(content))
+                parsed: dict[str, Any] = json.loads("".join(content))
+                return parsed
 
             else:
                 logger.warning(f"Unexpected content type: {content_type}")

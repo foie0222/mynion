@@ -17,7 +17,8 @@ from typing import Any
 
 import boto3
 import httpx
-from agent_client import AgentCoreClient
+
+from .agent_client import AgentCoreClient
 
 # Configure logging
 logger = logging.getLogger()

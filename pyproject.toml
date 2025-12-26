@@ -28,6 +28,8 @@ dev = [
 
 [tool.mypy]
 python_version = "3.11"
+# CDKはcdk/ディレクトリ内で実行されるため、モジュール解決パスを追加
+mypy_path = ["cdk"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
@@ -48,10 +50,6 @@ exclude = [
 module = [
     "strands.*",
     "aws_cdk.*",
-    # ランタイム環境では同一ディレクトリにコピーされるためmypyでは解決できない
-    "agentcore_runtime",
-    "slack_stack",
-    "agent_client",
 ]
 ignore_missing_imports = true
 

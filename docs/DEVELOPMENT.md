@@ -15,8 +15,17 @@ VSCodeで推奨拡張機能をインストール：
 - Python
 - Pylance
 - Ruff
+- GitHub Copilot（推奨）
 
-### 2. 開発依存関係の同期
+### 2. GitHub Copilot設定
+
+このプロジェクトでは、`.github/copilot-instructions.md` にプロジェクト固有のCopilot設定が定義されています：
+
+- **レビューは日本語で提供**されます
+- プロジェクトのコーディング規約やベストプラクティスが自動的に適用されます
+- コミットメッセージのフォーマット（Issue番号を含める等）がレビューされます
+
+### 3. 開発依存関係の同期
 
 ```bash
 uv sync

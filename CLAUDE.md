@@ -22,7 +22,7 @@
 
 ## Project Structure
 - `cdk/` - AWS CDKインフラストラクチャコード
-- `app/` - アプリケーションコード（Slack連携等）
+- `interfaces/` - 外部システム連携（Slack等）
 - `mcp/` - MCPサーバー実装
 - `agent.py` - Strands Agentのメイン実装
 

@@ -42,7 +42,7 @@ mypy .
 
 # 特定のディレクトリのみ
 mypy cdk/
-mypy app/
+mypy interfaces/
 
 # 厳密モード
 mypy --strict cdk/

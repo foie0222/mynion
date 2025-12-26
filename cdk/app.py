@@ -2,9 +2,8 @@
 import os
 
 import aws_cdk as cdk
-
-from cdk.agentcore_runtime import AgentCoreStack
-from cdk.slack_stack import SlackIntegrationStack
+from agentcore_runtime import AgentCoreStack
+from slack_stack import SlackIntegrationStack
 
 app = cdk.App()
 

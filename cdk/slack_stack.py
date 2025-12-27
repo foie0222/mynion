@@ -11,7 +11,7 @@ This stack creates:
 
 from pathlib import Path
 
-from aws_cdk import CfnOutput, Duration, Stack
+from aws_cdk import BundlingOptions, CfnOutput, Duration, Stack
 from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
@@ -205,13 +205,23 @@ class SlackIntegrationStack(Stack):
             retention=logs.RetentionDays.ONE_WEEK,
         )
 
-        # Create Lambda function
+        # Create Lambda function with bundled dependencies
         receiver_lambda = lambda_.Function(
             self,
             "ReceiverLambda",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="receiver.handler",
-            code=lambda_.Code.from_asset(str(receiver_dir)),
+            code=lambda_.Code.from_asset(
+                str(receiver_dir),
+                bundling=BundlingOptions(
+                    image=lambda_.Runtime.PYTHON_3_11.bundling_image,
+                    command=[
+                        "bash",
+                        "-c",
+                        "pip install -r requirements.txt -t /asset-output && cp -au . /asset-output",
+                    ],
+                ),
+            ),
             timeout=Duration.seconds(5),  # Must respond within 3 seconds to Slack
             memory_size=256,
             role=receiver_role,

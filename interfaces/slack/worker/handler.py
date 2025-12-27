@@ -39,6 +39,29 @@ SLACK_SESSION_NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-5678-9abc-def012345678")
 # Cache for Slack credentials
 _slack_credentials: dict[str, str] | None = None
 
+# Cache for bot user ID (loaded once per container lifecycle)
+_bot_user_id: str | None = None
+
+
+def get_bot_user_id(slack_client: "SlackClient") -> str:
+    """
+    Get bot user ID with caching.
+    Cached for container lifecycle to improve performance.
+
+    Args:
+        slack_client: SlackClient instance
+
+    Returns:
+        Bot user ID
+    """
+    global _bot_user_id
+
+    if _bot_user_id is not None:
+        return _bot_user_id
+
+    _bot_user_id = slack_client.get_bot_user_id()
+    return _bot_user_id
+
 
 def get_slack_credentials() -> dict[str, str]:
     """
@@ -217,6 +240,7 @@ class SlackClient:
                     params={
                         "channel": channel,
                         "ts": thread_ts,
+                        "limit": 5,
                     },
                     timeout=10.0,
                 )
@@ -254,15 +278,7 @@ def is_bot_in_thread(
         response = slack_client.get_thread_replies(channel, thread_ts)
         messages = response.get("messages", [])
 
-        for msg in messages:
-            # Check if message is from the bot
-            if msg.get("user") == bot_user_id:
-                return True
-            # Also check bot_id for bot users
-            if msg.get("bot_id"):
-                return True
-
-        return False
+        return any(msg.get("user") == bot_user_id for msg in messages)
     except Exception as e:
         logger.error(f"Error checking bot in thread: {str(e)}", exc_info=True)
         return False
@@ -288,10 +304,6 @@ def should_respond(
     """
     text = slack_event.get("text", "")
     thread_ts = slack_event.get("thread_ts")
-
-    # Ignore bot's own messages
-    if slack_event.get("bot_id"):
-        return False
 
     # Respond if mentioned
     if f"<@{bot_user_id}>" in text:
@@ -356,8 +368,8 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         channel_id = event.get("channel_id", "")
         thread_id = event.get("thread_id", "")
 
-        # Get bot user ID for response filtering
-        bot_user_id = slack_client.get_bot_user_id()
+        # Get bot user ID for response filtering (cached)
+        bot_user_id = get_bot_user_id(slack_client)
         if not bot_user_id:
             logger.error("Failed to get bot user ID")
             return {"statusCode": 500, "body": "Failed to get bot user ID"}

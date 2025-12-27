@@ -172,10 +172,13 @@ class SlackClient:
         Get the bot's user ID using auth.test API.
 
         Results are cached globally for the container lifecycle.
-        Only successful results are cached; failures will be retried on next call.
+        Only successful results are cached.
 
         Returns:
-            Bot user ID, or empty string if retrieval fails
+            Bot user ID
+
+        Raises:
+            RuntimeError: When the bot user ID cannot be retrieved
         """
         global _bot_user_id
 
@@ -198,20 +201,25 @@ class SlackClient:
                 result: dict[str, Any] = response.json()
 
                 if not result.get("ok"):
-                    logger.error(f"Slack API error: {result.get('error')}")
-                    return ""
+                    error_msg = f"Slack API error: {result.get('error')}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
 
                 user_id: str = result.get("user_id", "")
+                if not user_id:
+                    error_msg = "Slack API response missing user_id"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
 
-                # Only cache successful results
-                if user_id:
-                    _bot_user_id = user_id
-
+                # Cache successful result
+                _bot_user_id = user_id
                 return user_id
 
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Error getting bot user ID: {str(e)}", exc_info=True)
-            return ""
+            raise RuntimeError(f"Failed to get bot user ID: {str(e)}") from e
 
     def get_thread_replies(self, channel: str, thread_ts: str) -> dict[str, Any]:
         """
@@ -368,9 +376,6 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
         # Get bot user ID for response filtering (cached)
         bot_user_id = slack_client.get_bot_user_id()
-        if not bot_user_id:
-            logger.error("Failed to get bot user ID")
-            return {"statusCode": 500, "body": "Failed to get bot user ID"}
 
         # Check if bot should respond to this event
         if not should_respond(slack_client, slack_event, bot_user_id, channel_id):

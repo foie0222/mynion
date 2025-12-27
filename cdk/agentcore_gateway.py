@@ -3,7 +3,17 @@
 This stack creates:
 - Lambda function for Google Calendar operations
 - AgentCore Gateway for MCP protocol
-- Lambda Target with OAuth credential provider
+- Lambda Target for calendar tools
+
+OAuth Authentication Flow:
+1. Agent (agent.py) uses AgentCore Identity to obtain Google OAuth token
+2. Agent passes access_token as a tool parameter to MCP calls
+3. Gateway invokes Lambda using IAM role (GATEWAY_IAM_ROLE)
+4. Lambda uses access_token to authenticate with Google Calendar API
+
+Note: The OAuth Credential Provider (GoogleCalendarProvider) is created separately
+via AgentCore Identity CLI, not in this CDK stack. The agent handles the OAuth
+flow including user consent and token refresh.
 """
 
 from pathlib import Path
@@ -65,28 +75,20 @@ class AgentCoreGatewayStack(Stack):
         )
 
         # Grant Gateway role permission to invoke Lambda
+        # Note: OAuth is handled by the agent, not the Gateway. The Gateway only needs
+        # permission to invoke the Lambda function using IAM authentication.
         calendar_lambda.grant_invoke(gateway_execution_role)
 
-        # Grant Gateway role permission to access AgentCore Identity for OAuth tokens
-        gateway_execution_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "bedrock-agentcore:GetResourceOauth2Token",
-                    "bedrock-agentcore:GetResourceApiKey",
-                ],
-                resources=[
-                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:*"
-                ],
-            )
-        )
-
         # Create AgentCore Gateway
+        # authorizer_type="NONE" means the Gateway itself doesn't require authentication.
+        # The agent authenticates with Google via AgentCore Identity and passes the
+        # access_token as a tool parameter.
         gateway = agentcore.CfnGateway(
             self,
             "CalendarGateway",
             name="mynion-calendar-gateway",
             protocol_type="MCP",
-            authorizer_type="NONE",  # Using OAuth at target level
+            authorizer_type="NONE",
             role_arn=gateway_execution_role.role_arn,
             description="Gateway for Google Calendar MCP tools",
             protocol_configuration=agentcore.CfnGateway.GatewayProtocolConfigurationProperty(
@@ -99,9 +101,11 @@ class AgentCoreGatewayStack(Stack):
         )
 
         # Common access_token property for all tools
+        # The access_token is obtained by the agent via AgentCore Identity and passed
+        # as a parameter to each tool call. See agent.py for the OAuth flow implementation.
         access_token_prop = {
             "type": "string",
-            "description": "Google OAuth access token (required parameter)",
+            "description": "Google OAuth access token obtained via AgentCore Identity",
         }
 
         # Define tool schemas for Calendar operations
@@ -220,7 +224,10 @@ class AgentCoreGatewayStack(Stack):
             },
         ]
 
-        # Create Lambda Target with OAuth credential provider
+        # Create Lambda Target
+        # credential_provider_type="GATEWAY_IAM_ROLE" means the Gateway uses its IAM role
+        # to invoke the Lambda. This is separate from Google OAuth which is handled by
+        # the agent and passed as access_token parameter.
         calendar_target = agentcore.CfnGatewayTarget(
             self,
             "CalendarLambdaTarget",
@@ -260,7 +267,7 @@ class AgentCoreGatewayStack(Stack):
                     credential_provider_type="GATEWAY_IAM_ROLE",
                 )
             ],
-            description="Lambda target for Google Calendar tools with OAuth",
+            description="Lambda target for Google Calendar tools",
         )
 
         # Ensure target is created after gateway

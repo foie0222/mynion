@@ -4,6 +4,7 @@
 - Git操作は必ずGitHub MCPを使用する（bash gitコマンドは使わない）
 - 機能追加やバグ修正を始める前に、GitHub Issueを作成する
 - 作業時は `git worktree` を使用してブランチごとに別ディレクトリで作業する
+- worktreeのフォルダ名はissue番号に合わせる（例: `issue-3`, `issue-12`）
 - コミットメッセージにはIssue番号を含める（例: "Issue #3: カレンダーMCP追加"）
 - コミットメッセージにClaudeの署名（Co-Authored-By等）は含めない
 - PRを作成する際は変更内容を明確に記載する

@@ -1,0 +1,2 @@
+# Dependencies for Slack Receiver Lambda
+httpx>=0.28.0

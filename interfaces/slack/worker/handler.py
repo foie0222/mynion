@@ -310,9 +310,7 @@ def should_respond(
         return True
 
     # For thread replies, check if bot is participating
-    return bool(
-        thread_ts and is_bot_in_thread(slack_client, channel, thread_ts, bot_user_id)
-    )
+    return bool(thread_ts and is_bot_in_thread(slack_client, channel, thread_ts, bot_user_id))
 
 
 def clean_message(text: str) -> str:

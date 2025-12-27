@@ -168,6 +168,15 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         if event_type == "event_callback":
             slack_event = body.get("event", {})
 
+            # Skip bot's own messages early to avoid unnecessary Worker invocation
+            if slack_event.get("bot_id"):
+                logger.info("Skipping bot's own message")
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({"ok": True}),
+                }
+
             # Extract user and team IDs for identity
             user_id = slack_event.get("user", "")
             team_id = body.get("team_id", "")

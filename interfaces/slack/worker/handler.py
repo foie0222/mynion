@@ -223,14 +223,19 @@ class SlackClient:
 
     def get_thread_replies(self, channel: str, thread_ts: str) -> dict[str, Any]:
         """
-        Get all replies in a thread using conversations.replies API.
+        Get recent replies in a thread using conversations.replies API.
+
+        Retrieves up to 5 most recent messages to check bot participation.
+        This limit balances API performance with detection accuracy for
+        typical conversation threads.
 
         Args:
             channel: Slack channel ID
             thread_ts: Thread timestamp (parent message ts)
 
         Returns:
-            Slack API response with messages
+            Slack API response with messages.
+            Returns {"messages": []} on error to allow graceful degradation.
         """
         try:
             with httpx.Client() as client:
@@ -292,7 +297,6 @@ def should_respond(
     slack_client: SlackClient,
     slack_event: dict[str, Any],
     bot_user_id: str,
-    channel: str,
 ) -> bool:
     """
     Determine if the bot should respond to this event.
@@ -305,13 +309,17 @@ def should_respond(
         slack_client: SlackClient instance
         slack_event: Slack event data
         bot_user_id: Bot's user ID
-        channel: Slack channel ID
 
     Returns:
         True if bot should respond, False otherwise
     """
     text = slack_event.get("text", "")
     thread_ts = slack_event.get("thread_ts")
+    channel = slack_event.get("channel", "")
+
+    # Ignore messages from the bot itself (prevents infinite loop)
+    if slack_event.get("user") == bot_user_id:
+        return False
 
     # Respond if mentioned
     if f"<@{bot_user_id}>" in text:
@@ -378,7 +386,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         bot_user_id = slack_client.get_bot_user_id()
 
         # Check if bot should respond to this event
-        if not should_respond(slack_client, slack_event, bot_user_id, channel_id):
+        if not should_respond(slack_client, slack_event, bot_user_id):
             logger.info("Bot should not respond to this event, skipping")
             return {"statusCode": 200, "body": "Not responding"}
 

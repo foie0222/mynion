@@ -176,9 +176,7 @@ def update_event(
         event["end"] = {"dateTime": end_time, "timeZone": tz}
 
     updated_event = (
-        service.events()
-        .update(calendarId="primary", eventId=event_id, body=event)
-        .execute()
+        service.events().update(calendarId="primary", eventId=event_id, body=event).execute()
     )
 
     return {
@@ -229,9 +227,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         # Get tool name from context (format: target_name___tool_name)
         client_context = context.client_context
         if client_context and client_context.custom:
-            original_tool_name = client_context.custom.get(
-                "bedrockAgentCoreToolName", ""
-            )
+            original_tool_name = client_context.custom.get("bedrockAgentCoreToolName", "")
             # Strip target prefix
             if TOOL_NAME_DELIMITER in original_tool_name:
                 tool_name = original_tool_name.split(TOOL_NAME_DELIMITER, 1)[1]
@@ -296,9 +292,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         error_content = json.loads(e.content.decode("utf-8"))
         return {
             "error": "Google Calendar API error",
-            "message": error_content.get("error", {}).get(
-                "message", "Unknown API error"
-            ),
+            "message": error_content.get("error", {}).get("message", "Unknown API error"),
             "status": e.resp.status,
         }
     except KeyError as e:

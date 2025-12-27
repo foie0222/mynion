@@ -43,26 +43,6 @@ _slack_credentials: dict[str, str] | None = None
 _bot_user_id: str | None = None
 
 
-def get_bot_user_id(slack_client: "SlackClient") -> str:
-    """
-    Get bot user ID with caching.
-    Cached for container lifecycle to improve performance.
-
-    Args:
-        slack_client: SlackClient instance
-
-    Returns:
-        Bot user ID
-    """
-    global _bot_user_id
-
-    if _bot_user_id is not None:
-        return _bot_user_id
-
-    _bot_user_id = slack_client.get_bot_user_id()
-    return _bot_user_id
-
-
 def get_slack_credentials() -> dict[str, str]:
     """
     Get Slack credentials from Secrets Manager.
@@ -191,9 +171,18 @@ class SlackClient:
         """
         Get the bot's user ID using auth.test API.
 
+        Results are cached globally for the container lifecycle.
+        Only successful results are cached; failures will be retried on next call.
+
         Returns:
-            Bot user ID
+            Bot user ID, or empty string if retrieval fails
         """
+        global _bot_user_id
+
+        # Return cached value if available
+        if _bot_user_id is not None:
+            return _bot_user_id
+
         try:
             with httpx.Client() as client:
                 response = client.post(
@@ -213,6 +202,11 @@ class SlackClient:
                     return ""
 
                 user_id: str = result.get("user_id", "")
+
+                # Only cache successful results
+                if user_id:
+                    _bot_user_id = user_id
+
                 return user_id
 
         except Exception as e:
@@ -272,7 +266,9 @@ def is_bot_in_thread(
         bot_user_id: Bot's user ID
 
     Returns:
-        True if bot has messages in the thread
+        True if the bot has messages in the thread.
+        False if the bot has no messages in the thread or if an error occurs
+        while checking (errors are logged and not raised).
     """
     try:
         response = slack_client.get_thread_replies(channel, thread_ts)
@@ -285,22 +281,26 @@ def is_bot_in_thread(
 
 
 def should_respond(
+    slack_client: SlackClient,
     slack_event: dict[str, Any],
     bot_user_id: str,
-    slack_client: SlackClient,
     channel: str,
 ) -> bool:
     """
     Determine if the bot should respond to this event.
 
+    The bot responds when:
+    - The bot is mentioned in the message text
+    - The message is a reply in a thread where the bot has previously participated
+
     Args:
+        slack_client: SlackClient instance
         slack_event: Slack event data
         bot_user_id: Bot's user ID
-        slack_client: SlackClient instance
         channel: Slack channel ID
 
     Returns:
-        True if bot should respond
+        True if bot should respond, False otherwise
     """
     text = slack_event.get("text", "")
     thread_ts = slack_event.get("thread_ts")
@@ -367,13 +367,13 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         thread_id = event.get("thread_id", "")
 
         # Get bot user ID for response filtering (cached)
-        bot_user_id = get_bot_user_id(slack_client)
+        bot_user_id = slack_client.get_bot_user_id()
         if not bot_user_id:
             logger.error("Failed to get bot user ID")
             return {"statusCode": 500, "body": "Failed to get bot user ID"}
 
         # Check if bot should respond to this event
-        if not should_respond(slack_event, bot_user_id, slack_client, channel_id):
+        if not should_respond(slack_client, slack_event, bot_user_id, channel_id):
             logger.info("Bot should not respond to this event, skipping")
             return {"statusCode": 200, "body": "Not responding"}
 

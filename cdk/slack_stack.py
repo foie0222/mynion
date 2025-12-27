@@ -95,7 +95,7 @@ class SlackIntegrationStack(Stack):
             Lambda function
         """
         # Get worker directory
-        worker_dir = Path(__file__).parent.parent / "app" / "slack" / "worker"
+        worker_dir = Path(__file__).parent.parent / "interfaces" / "slack" / "worker"
 
         # Create execution role for Worker Lambda
         worker_role = iam.Role(
@@ -175,7 +175,7 @@ class SlackIntegrationStack(Stack):
             Lambda function
         """
         # Get receiver code path
-        receiver_dir = Path(__file__).parent.parent / "app" / "slack"
+        receiver_dir = Path(__file__).parent.parent / "interfaces" / "slack"
 
         # Create execution role for Receiver Lambda
         receiver_role = iam.Role(

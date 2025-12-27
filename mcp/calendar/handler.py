@@ -225,19 +225,32 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """
     try:
         # Get tool name from context (format: target_name___tool_name)
-        client_context = context.client_context
-        if client_context and client_context.custom:
-            original_tool_name = client_context.custom.get("bedrockAgentCoreToolName", "")
-            # Strip target prefix
-            if TOOL_NAME_DELIMITER in original_tool_name:
-                tool_name = original_tool_name.split(TOOL_NAME_DELIMITER, 1)[1]
-            else:
-                tool_name = original_tool_name
-        else:
+        client_context = getattr(context, "client_context", None)
+        if not client_context:
             return {
                 "error": "Missing client context",
                 "message": "Lambda must be invoked through AgentCore Gateway",
             }
+
+        custom = getattr(client_context, "custom", None)
+        if not custom:
+            return {
+                "error": "Missing custom context",
+                "message": "AgentCore Gateway context not found",
+            }
+
+        original_tool_name = custom.get("bedrockAgentCoreToolName")
+        if not original_tool_name:
+            return {
+                "error": "Missing tool name",
+                "message": "bedrockAgentCoreToolName not found in context",
+            }
+
+        # Strip target prefix
+        if TOOL_NAME_DELIMITER in original_tool_name:
+            tool_name = original_tool_name.split(TOOL_NAME_DELIMITER, 1)[1]
+        else:
+            tool_name = original_tool_name
 
         # Get OAuth access token from event arguments
         # access_token is passed as a tool parameter by the Agent
@@ -289,10 +302,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             }
 
     except HttpError as e:
-        error_content = json.loads(e.content.decode("utf-8"))
+        try:
+            error_content = json.loads(e.content.decode("utf-8"))
+            error_message = error_content.get("error", {}).get("message", "Unknown API error")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            error_message = "Google Calendar API request failed"
         return {
             "error": "Google Calendar API error",
-            "message": error_content.get("error", {}).get("message", "Unknown API error"),
+            "message": error_message,
             "status": e.resp.status,
         }
     except KeyError as e:

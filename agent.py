@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Strands Agent Server", version="1.0.0")
 
 # AgentCore Gateway URL for Calendar tools
+# NOTE: The default URL below is environment-specific and should be overridden
+# via the CALENDAR_GATEWAY_URL environment variable in production deployments.
+# The Gateway URL is exported from the AgentCoreGatewayStack CDK stack.
 CALENDAR_GATEWAY_URL = os.environ.get(
     "CALENDAR_GATEWAY_URL",
     "https://mynion-calendar-gateway-kujxv7yjpd.gateway.bedrock-agentcore.ap-northeast-1.amazonaws.com/mcp",

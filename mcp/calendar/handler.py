@@ -89,6 +89,7 @@ def create_event(
     end_time: str,
     description: str | None = None,
     location: str | None = None,
+    timezone: str = "Asia/Tokyo",
 ) -> dict[str, Any]:
     """Create a new calendar event.
 
@@ -99,6 +100,7 @@ def create_event(
         end_time: End time in ISO format
         description: Event description (optional)
         location: Event location (optional)
+        timezone: Timezone for the event (default: Asia/Tokyo)
 
     Returns:
         Dictionary with created event details
@@ -107,8 +109,8 @@ def create_event(
 
     event_body: dict[str, Any] = {
         "summary": summary,
-        "start": {"dateTime": start_time, "timeZone": "Asia/Tokyo"},
-        "end": {"dateTime": end_time, "timeZone": "Asia/Tokyo"},
+        "start": {"dateTime": start_time, "timeZone": timezone},
+        "end": {"dateTime": end_time, "timeZone": timezone},
     }
 
     if description:
@@ -136,6 +138,7 @@ def update_event(
     end_time: str | None = None,
     description: str | None = None,
     location: str | None = None,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
     """Update an existing calendar event.
 
@@ -147,6 +150,7 @@ def update_event(
         end_time: New end time in ISO format (optional)
         description: New event description (optional)
         location: New event location (optional)
+        timezone: Timezone for the event (optional, preserves original if not provided)
 
     Returns:
         Dictionary with updated event details
@@ -164,9 +168,12 @@ def update_event(
     if location is not None:
         event["location"] = location
     if start_time:
-        event["start"] = {"dateTime": start_time, "timeZone": "Asia/Tokyo"}
+        # Use provided timezone, or preserve original, or default to Asia/Tokyo
+        tz = timezone or event.get("start", {}).get("timeZone", "Asia/Tokyo")
+        event["start"] = {"dateTime": start_time, "timeZone": tz}
     if end_time:
-        event["end"] = {"dateTime": end_time, "timeZone": "Asia/Tokyo"}
+        tz = timezone or event.get("end", {}).get("timeZone", "Asia/Tokyo")
+        event["end"] = {"dateTime": end_time, "timeZone": tz}
 
     updated_event = (
         service.events()
@@ -261,6 +268,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 end_time=event["end_time"],
                 description=event.get("description"),
                 location=event.get("location"),
+                timezone=event.get("timezone", "Asia/Tokyo"),
             )
         elif tool_name == "update_event":
             return update_event(
@@ -271,6 +279,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 end_time=event.get("end_time"),
                 description=event.get("description"),
                 location=event.get("location"),
+                timezone=event.get("timezone"),
             )
         elif tool_name == "delete_event":
             return delete_event(

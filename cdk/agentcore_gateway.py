@@ -156,6 +156,10 @@ class AgentCoreGatewayStack(Stack):
                             "type": "string",
                             "description": "Location of the event (optional)",
                         },
+                        "timezone": {
+                            "type": "string",
+                            "description": "Timezone for the event (e.g., Asia/Tokyo, America/New_York). Default: Asia/Tokyo",
+                        },
                     },
                     "required": ["access_token", "summary", "start_time", "end_time"],
                 },
@@ -190,6 +194,10 @@ class AgentCoreGatewayStack(Stack):
                         "location": {
                             "type": "string",
                             "description": "New location (optional)",
+                        },
+                        "timezone": {
+                            "type": "string",
+                            "description": "Timezone for the event. If not provided, preserves the original timezone.",
                         },
                     },
                     "required": ["access_token", "event_id"],

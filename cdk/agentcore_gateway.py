@@ -7,6 +7,7 @@ This stack creates:
 """
 
 from pathlib import Path
+from typing import Any
 
 from aws_cdk import BundlingOptions, CfnOutput, Duration, Stack
 from aws_cdk import aws_bedrockagentcore as agentcore
@@ -73,7 +74,9 @@ class AgentCoreGatewayStack(Stack):
                     "bedrock-agentcore:GetResourceOauth2Token",
                     "bedrock-agentcore:GetResourceApiKey",
                 ],
-                resources=["*"],
+                resources=[
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:*"
+                ],
             )
         )
 
@@ -98,11 +101,11 @@ class AgentCoreGatewayStack(Stack):
         # Common access_token property for all tools
         access_token_prop = {
             "type": "string",
-            "description": "Google OAuth access token obtained via @requires_access_token",
+            "description": "Google OAuth access token (required parameter)",
         }
 
         # Define tool schemas for Calendar operations
-        tool_schemas = [
+        tool_schemas: list[dict[str, Any]] = [
             {
                 "name": "list_events",
                 "description": "List calendar events within a time range. Returns events from the user's primary calendar.",

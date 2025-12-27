@@ -54,6 +54,8 @@ module = [
     "aws_cdk.*",
     "bedrock_agentcore.*",
     "mcp.*",
+    "google.*",
+    "googleapiclient.*",
 ]
 ignore_missing_imports = true
 

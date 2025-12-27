@@ -7,7 +7,7 @@ OAuth access token is injected via credentials in the Lambda context.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from google.oauth2.credentials import Credentials
@@ -45,9 +45,9 @@ def list_events(
 
     # Default time range: now to 7 days from now
     if not time_min:
-        time_min = datetime.utcnow().isoformat() + "Z"
+        time_min = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     if not time_max:
-        time_max = (datetime.utcnow() + timedelta(days=7)).isoformat() + "Z"
+        time_max = (datetime.now(UTC) + timedelta(days=7)).isoformat().replace("+00:00", "Z")
 
     events_result = (
         service.events()
@@ -157,7 +157,7 @@ def update_event(
     event = service.events().get(calendarId="primary", eventId=event_id).execute()
 
     # Update fields if provided
-    if summary:
+    if summary is not None:
         event["summary"] = summary
     if description is not None:
         event["description"] = description
@@ -237,7 +237,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             }
 
         # Get OAuth access token from event arguments
-        # The token is passed by the Agent using @requires_access_token decorator
+        # access_token is passed as a tool parameter by the Agent
         access_token = event.get("access_token")
         if not access_token:
             return {

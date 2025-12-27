@@ -4,22 +4,33 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
+# Core dependencies shared across components
 dependencies = [
+    "boto3>=1.37.8",
+    "pydantic>=2.12.4",
+]
+
+[project.optional-dependencies]
+# Agent runtime dependencies
+agent = [
     "fastapi>=0.121.1",
     "httpx>=0.28.1",
-    "pydantic>=2.12.4",
-    "strands-agents>=1.15.0",
     "uvicorn[standard]>=0.38.0",
-    # Slack integration dependencies
-    "slack-bolt>=1.21.4",
-    "boto3>=1.37.8",
-    "aws-cdk-lib>=2.224.0",
-    "constructs>=10.4.3",
-    "aws-cdk-aws-bedrock-agentcore-alpha==2.224.0a0",
+    "strands-agents>=1.15.0",
     # MCP client for Gateway integration
     "mcp>=1.1.0",
     # AgentCore Identity for OAuth
     "bedrock-agentcore>=0.1.0",
+]
+# CDK infrastructure dependencies
+cdk = [
+    "aws-cdk-lib>=2.224.0",
+    "constructs>=10.4.3",
+    "aws-cdk-aws-bedrock-agentcore-alpha==2.224.0a0",
+]
+# Slack integration dependencies
+slack = [
+    "slack-bolt>=1.21.4",
 ]
 
 [dependency-groups]

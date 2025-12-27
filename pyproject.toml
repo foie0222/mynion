@@ -16,6 +16,9 @@ dependencies = [
     "aws-cdk-lib>=2.224.0",
     "constructs>=10.4.3",
     "aws-cdk-aws-bedrock-agentcore-alpha==2.224.0a0",
+    # AgentCore SDK for Identity and Gateway integration
+    "bedrock-agentcore>=0.1.0",
+    "mcp>=1.1.0",
 ]
 
 [dependency-groups]
@@ -50,6 +53,8 @@ exclude = [
 module = [
     "strands.*",
     "aws_cdk.*",
+    "bedrock_agentcore.*",
+    "mcp.*",
 ]
 ignore_missing_imports = true
 

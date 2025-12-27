@@ -1,0 +1,285 @@
+"""CDK Stack for AgentCore Gateway with Google Calendar Lambda Target.
+
+This stack creates:
+- Lambda function for Google Calendar operations
+- AgentCore Gateway for MCP protocol
+- Lambda Target with OAuth credential provider
+"""
+
+from pathlib import Path
+
+from aws_cdk import BundlingOptions, CfnOutput, Duration, Stack
+from aws_cdk import aws_bedrockagentcore as agentcore
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_lambda as lambda_
+from constructs import Construct
+
+
+class AgentCoreGatewayStack(Stack):
+    """Stack for AgentCore Gateway with Google Calendar tools."""
+
+    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+        super().__init__(scope, construct_id, **kwargs)
+
+        # Path to the Lambda code
+        lambda_code_path = Path(__file__).parent.parent / "mcp" / "calendar"
+
+        # Create Lambda function for Calendar operations
+        calendar_lambda = lambda_.Function(
+            self,
+            "CalendarToolsLambda",
+            function_name="mynion-calendar-tools",
+            runtime=lambda_.Runtime.PYTHON_3_11,
+            handler="handler.lambda_handler",
+            code=lambda_.Code.from_asset(
+                str(lambda_code_path),
+                bundling=BundlingOptions(
+                    image=lambda_.Runtime.PYTHON_3_11.bundling_image,
+                    command=[
+                        "bash",
+                        "-c",
+                        "pip install -r requirements.txt -t /asset-output && cp -au . /asset-output",
+                    ],
+                ),
+            ),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            description="Lambda function for Google Calendar MCP tools",
+        )
+
+        # IAM role for Gateway execution
+        gateway_execution_role = iam.Role(
+            self,
+            "GatewayExecutionRole",
+            assumed_by=iam.ServicePrincipal(
+                "bedrock-agentcore.amazonaws.com",
+                conditions={
+                    "StringEquals": {"aws:SourceAccount": Stack.of(self).account},
+                    "ArnLike": {
+                        "aws:SourceArn": f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:*"
+                    },
+                },
+            ),
+            description="Execution role for AgentCore Gateway",
+        )
+
+        # Grant Gateway role permission to invoke Lambda
+        calendar_lambda.grant_invoke(gateway_execution_role)
+
+        # Grant Gateway role permission to access AgentCore Identity for OAuth tokens
+        gateway_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "bedrock-agentcore:GetResourceOauth2Token",
+                    "bedrock-agentcore:GetResourceApiKey",
+                ],
+                resources=["*"],
+            )
+        )
+
+        # Create AgentCore Gateway
+        gateway = agentcore.CfnGateway(
+            self,
+            "CalendarGateway",
+            name="mynion-calendar-gateway",
+            protocol_type="MCP",
+            authorizer_type="NONE",  # Using OAuth at target level
+            role_arn=gateway_execution_role.role_arn,
+            description="Gateway for Google Calendar MCP tools",
+            protocol_configuration=agentcore.CfnGateway.GatewayProtocolConfigurationProperty(
+                mcp=agentcore.CfnGateway.MCPGatewayConfigurationProperty(
+                    instructions="Google Calendar tools for listing, creating, updating, and deleting calendar events.",
+                    search_type="SEMANTIC",
+                    supported_versions=["2025-06-18"],
+                )
+            ),
+        )
+
+        # Common access_token property for all tools
+        access_token_prop = {
+            "type": "string",
+            "description": "Google OAuth access token obtained via @requires_access_token",
+        }
+
+        # Define tool schemas for Calendar operations
+        tool_schemas = [
+            {
+                "name": "list_events",
+                "description": "List calendar events within a time range. Returns events from the user's primary calendar.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "access_token": access_token_prop,
+                        "time_min": {
+                            "type": "string",
+                            "description": "Start time in ISO format (e.g., 2024-12-01T00:00:00Z). Defaults to now.",
+                        },
+                        "time_max": {
+                            "type": "string",
+                            "description": "End time in ISO format. Defaults to 7 days from now.",
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum number of events to return. Default is 10.",
+                        },
+                    },
+                    "required": ["access_token"],
+                },
+            },
+            {
+                "name": "create_event",
+                "description": "Create a new calendar event with the specified title, start time, and end time.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "access_token": access_token_prop,
+                        "summary": {
+                            "type": "string",
+                            "description": "Title of the event",
+                        },
+                        "start_time": {
+                            "type": "string",
+                            "description": "Start time in ISO format (e.g., 2024-12-01T10:00:00+09:00)",
+                        },
+                        "end_time": {
+                            "type": "string",
+                            "description": "End time in ISO format",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Description of the event (optional)",
+                        },
+                        "location": {
+                            "type": "string",
+                            "description": "Location of the event (optional)",
+                        },
+                    },
+                    "required": ["access_token", "summary", "start_time", "end_time"],
+                },
+            },
+            {
+                "name": "update_event",
+                "description": "Update an existing calendar event. Only provided fields will be updated.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "access_token": access_token_prop,
+                        "event_id": {
+                            "type": "string",
+                            "description": "ID of the event to update",
+                        },
+                        "summary": {
+                            "type": "string",
+                            "description": "New title of the event (optional)",
+                        },
+                        "start_time": {
+                            "type": "string",
+                            "description": "New start time in ISO format (optional)",
+                        },
+                        "end_time": {
+                            "type": "string",
+                            "description": "New end time in ISO format (optional)",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "New description (optional)",
+                        },
+                        "location": {
+                            "type": "string",
+                            "description": "New location (optional)",
+                        },
+                    },
+                    "required": ["access_token", "event_id"],
+                },
+            },
+            {
+                "name": "delete_event",
+                "description": "Delete a calendar event by its ID.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "access_token": access_token_prop,
+                        "event_id": {
+                            "type": "string",
+                            "description": "ID of the event to delete",
+                        },
+                    },
+                    "required": ["access_token", "event_id"],
+                },
+            },
+        ]
+
+        # Create Lambda Target with OAuth credential provider
+        calendar_target = agentcore.CfnGatewayTarget(
+            self,
+            "CalendarLambdaTarget",
+            name="calendar-tools",
+            gateway_identifier=gateway.attr_gateway_identifier,
+            target_configuration=agentcore.CfnGatewayTarget.TargetConfigurationProperty(
+                mcp=agentcore.CfnGatewayTarget.McpTargetConfigurationProperty(
+                    lambda_=agentcore.CfnGatewayTarget.McpLambdaTargetConfigurationProperty(
+                        lambda_arn=calendar_lambda.function_arn,
+                        tool_schema=agentcore.CfnGatewayTarget.ToolSchemaProperty(
+                            inline_payload=[
+                                agentcore.CfnGatewayTarget.ToolDefinitionProperty(
+                                    name=tool["name"],
+                                    description=tool["description"],
+                                    input_schema=agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                        type=tool["inputSchema"]["type"],
+                                        properties={
+                                            k: agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type=v["type"],
+                                                description=v.get("description"),
+                                            )
+                                            for k, v in tool["inputSchema"]
+                                            .get("properties", {})
+                                            .items()
+                                        },
+                                        required=tool["inputSchema"].get("required"),
+                                    ),
+                                )
+                                for tool in tool_schemas
+                            ]
+                        ),
+                    )
+                )
+            ),
+            credential_provider_configurations=[
+                agentcore.CfnGatewayTarget.CredentialProviderConfigurationProperty(
+                    credential_provider_type="GATEWAY_IAM_ROLE",
+                )
+            ],
+            description="Lambda target for Google Calendar tools with OAuth",
+        )
+
+        # Ensure target is created after gateway
+        calendar_target.add_dependency(gateway)
+
+        # Outputs
+        CfnOutput(
+            self,
+            "GatewayArn",
+            value=gateway.attr_gateway_arn,
+            description="ARN of the Calendar Gateway",
+            export_name=f"{Stack.of(self).stack_name}-GatewayArn",
+        )
+
+        CfnOutput(
+            self,
+            "GatewayUrl",
+            value=gateway.attr_gateway_url,
+            description="MCP endpoint URL for the Calendar Gateway",
+            export_name=f"{Stack.of(self).stack_name}-GatewayUrl",
+        )
+
+        CfnOutput(
+            self,
+            "CalendarLambdaArn",
+            value=calendar_lambda.function_arn,
+            description="ARN of the Calendar Lambda function",
+            export_name=f"{Stack.of(self).stack_name}-CalendarLambdaArn",
+        )
+
+        # Expose for other stacks
+        self.gateway_url = gateway.attr_gateway_url
+        self.gateway_arn = gateway.attr_gateway_arn

@@ -2,6 +2,7 @@
 import os
 
 import aws_cdk as cdk
+from agentcore_gateway import AgentCoreGatewayStack
 from agentcore_runtime import AgentCoreStack
 from slack_stack import SlackIntegrationStack
 
@@ -34,5 +35,13 @@ slack_integration_stack = SlackIntegrationStack(
 
 # Add explicit dependency
 slack_integration_stack.add_dependency(agentcore_stack)
+
+# Create the AgentCore Gateway stack for Google Calendar integration
+gateway_stack = AgentCoreGatewayStack(
+    app,
+    "AgentCoreGatewayStack",
+    env=env,
+    description="Stack for AgentCore Gateway with Google Calendar tools",
+)
 
 app.synth()

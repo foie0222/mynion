@@ -16,8 +16,7 @@ dependencies = [
     "aws-cdk-lib>=2.224.0",
     "constructs>=10.4.3",
     "aws-cdk-aws-bedrock-agentcore-alpha==2.224.0a0",
-    # AgentCore SDK for Identity and Gateway integration
-    "bedrock-agentcore>=0.1.0",
+    # MCP client for Gateway integration
     "mcp>=1.1.0",
 ]
 

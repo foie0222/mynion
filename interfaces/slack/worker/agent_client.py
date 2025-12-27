@@ -89,7 +89,8 @@ class AgentCoreClient:
 
             if "text/event-stream" in content_type:
                 content = []
-                for line in response["response"].iter_lines(chunk_size=10):
+                # Use larger chunk size to avoid breaking multi-byte UTF-8 characters
+                for line in response["response"].iter_lines(chunk_size=8192):
                     if line:
                         line_str = line.decode("utf-8")
                         if line_str.startswith("data: "):

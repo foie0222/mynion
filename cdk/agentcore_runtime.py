@@ -9,8 +9,25 @@ from constructs import Construct
 class AgentCoreStack(Stack):
     """Stack for deploying Mynion agent to AWS Bedrock AgentCore Runtime"""
 
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        calendar_gateway_url: str | None = None,
+        **kwargs,
+    ) -> None:
+        """
+        Initialize AgentCore Runtime stack.
+
+        Args:
+            scope: CDK scope
+            construct_id: Stack ID
+            calendar_gateway_url: Optional URL for Calendar Gateway (enables calendar tools)
+            **kwargs: Additional stack parameters
+        """
         super().__init__(scope, construct_id, **kwargs)
+
+        self.calendar_gateway_url = calendar_gateway_url
 
         # Get the path to the agent directory (parent of cdk directory)
         agent_dir = Path(__file__).parent.parent
@@ -106,6 +123,11 @@ class AgentCoreStack(Stack):
             agentcore.AgentRuntimeArtifact.from_asset(str(agent_dir))
         )
 
+        # Build environment variables for the runtime
+        environment_variables: dict[str, str] = {}
+        if self.calendar_gateway_url:
+            environment_variables["CALENDAR_GATEWAY_URL"] = self.calendar_gateway_url
+
         # Create the AgentCore Runtime
         self.runtime = agentcore.Runtime(
             self,
@@ -117,6 +139,8 @@ class AgentCoreStack(Stack):
             # Use public network configuration (default)
             # For VPC deployment, use RuntimeNetworkConfiguration.usingVpc()
             network_configuration=agentcore.RuntimeNetworkConfiguration.using_public_network(),
+            # Pass environment variables including Calendar Gateway URL
+            environment_variables=environment_variables if environment_variables else None,
         )
 
         # Expose runtime properties for other stacks

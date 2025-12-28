@@ -214,7 +214,7 @@ class MCPToolWithOAuth:
         try:
             self._tools_cache = self.mcp_client.list_tools_sync()
             for t in self._tools_cache:
-                logger.info(f"Discovered MCP tool: {t.name}")
+                logger.info(f"Discovered MCP tool: {t.tool_name}")
             return self._tools_cache
         except Exception as e:
             logger.error(f"Failed to list MCP tools: {e}", exc_info=True)
@@ -356,8 +356,8 @@ def create_strands_tools(wrapper: MCPToolWithOAuth) -> list[Any]:
     strands_tools: list[Any] = []
 
     for mcp_tool in mcp_tools:
-        tool_name = mcp_tool.name
-        tool_desc = mcp_tool.description or f"Execute {tool_name}"
+        tool_name = mcp_tool.tool_name
+        tool_desc = mcp_tool.tool_spec.get("description", f"Execute {tool_name}")
 
         # Create wrapper function for this tool
         # Note: We use a closure to capture tool_name

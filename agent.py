@@ -2,12 +2,32 @@
 
 This agent integrates with AgentCore Gateway to provide calendar operations.
 OAuth authentication is handled via AgentCore Identity with USER_FEDERATION flow.
+
+Architecture (Strands王道パターン):
+1. Tool Discovery: MCPClient fetches tool definitions from AgentCore Gateway
+2. Tool Execution: Wrapper layer handles OAuth token injection
+3. Auth Flow: Returns AUTH_REQUIRED (state transition) when user not authenticated
+
+The agent does NOT define tools with @tool decorator directly. Instead:
+- Tools are discovered dynamically from the MCP Gateway
+- A wrapper layer intercepts tool calls to handle OAuth
+- If authentication is required, AUTH_REQUIRED is returned as a result (not exception)
+- Slack integration shows auth button, user clicks, callback stores token
+- Tool call is retried after successful authentication
+
+Reference:
+- https://strandsagents.com/latest/user-guide/concepts/tools/mcp-tools/
+- https://dev.classmethod.jp/articles/amazon-bedrock-agentcore-gateway-lambda-tool/
 """
 
 import asyncio
+import contextlib
+import contextvars
+import json
 import logging
 import os
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,9 +44,6 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Strands Agent Server", version="1.0.0")
 
 # AgentCore Gateway URL for Calendar tools
-# Set CALENDAR_GATEWAY_URL environment variable to enable calendar tools.
-# The Gateway URL is exported from the AgentCoreGatewayStack CDK stack.
-# If not set, the agent will start without calendar tools.
 CALENDAR_GATEWAY_URL = os.environ.get("CALENDAR_GATEWAY_URL", "")
 
 # OAuth Credential Provider name (created via AgentCore Identity)
@@ -38,19 +55,267 @@ CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
 ]
 
+# Context variable for current user_id during request processing
+# This allows tools to access user_id without it being a tool parameter
+current_user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_user_id", default="default"
+)
+
 # Store for pending OAuth sessions (user_id -> auth_url)
 # In production, this should be stored in DynamoDB or similar
 pending_auth_sessions: dict[str, str] = {}
 
-# Global MCP client
+
+@dataclass
+class AuthRequired:
+    """Response indicating authentication is required.
+
+    This is returned as a tool RESULT, not raised as an exception.
+    The Slack integration should display this as a button for the user.
+    """
+
+    auth_url: str
+    state: str
+    tool_name: str
+    scopes: list[str]
+    message: str = "Google Calendar認証が必要です。以下のリンクをクリックして認証してください。"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON response."""
+        return {
+            "auth_required": True,
+            "auth_url": self.auth_url,
+            "state": self.state,
+            "tool_name": self.tool_name,
+            "scopes": self.scopes,
+            "message": self.message,
+        }
+
+
+class OAuthTokenManager:
+    """Manages OAuth tokens for users via AgentCore Identity."""
+
+    def __init__(self, oauth_provider: str, scopes: list[str]):
+        self.oauth_provider = oauth_provider
+        self.scopes = scopes
+        # Cache for tokens (user_id -> token)
+        # In production, use DynamoDB or similar
+        self._token_cache: dict[str, str] = {}
+
+    async def get_token(self, user_id: str) -> tuple[str | None, str | None]:
+        """Get OAuth token for user, or return auth URL if not authenticated.
+
+        Args:
+            user_id: User identifier for OAuth session
+
+        Returns:
+            Tuple of (access_token, auth_url). One will be None.
+            - If authenticated: (token, None)
+            - If not authenticated: (None, auth_url)
+        """
+        # Check cache first
+        if user_id in self._token_cache:
+            return self._token_cache[user_id], None
+
+        try:
+            from bedrock_agentcore.services.identity import IdentityClient
+
+            region = os.environ.get("AWS_REGION", "ap-northeast-1")
+            client = IdentityClient(region)
+
+            # Get workload identity token
+            workload_token_resp = client.get_workload_access_token(
+                workload_name=os.environ.get("WORKLOAD_NAME", "default"),
+                user_id=user_id,
+            )
+            workload_token = workload_token_resp.get("token")
+
+            if not workload_token:
+                logger.error("Failed to get workload identity token")
+                return None, None
+
+            # Try to get OAuth token
+            auth_url = None
+
+            async def capture_auth_url(url: str) -> None:
+                nonlocal auth_url
+                auth_url = url
+                pending_auth_sessions[user_id] = url
+
+            try:
+                token = await client.get_token(
+                    provider_name=self.oauth_provider,
+                    scopes=self.scopes,
+                    agent_identity_token=workload_token,
+                    auth_flow="USER_FEDERATION",
+                    on_auth_url=capture_auth_url,
+                )
+                # Cache the token
+                self._token_cache[user_id] = token
+                return token, None
+            except Exception:
+                if auth_url:
+                    logger.info(f"OAuth authentication required for user {user_id}")
+                    return None, auth_url
+                raise
+
+        except ImportError:
+            logger.warning("bedrock-agentcore SDK not available, OAuth disabled")
+            return None, None
+        except Exception as e:
+            logger.error(f"Error getting OAuth token: {e}", exc_info=True)
+            return None, None
+
+    def get_token_sync(self, user_id: str) -> tuple[str | None, str | None]:
+        """Synchronous wrapper for get_token."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self.get_token(user_id))
+                    return future.result()
+            else:
+                return asyncio.run(self.get_token(user_id))
+        except Exception as e:
+            logger.error(f"Error in get_token_sync: {e}", exc_info=True)
+            return None, None
+
+    def invalidate_token(self, user_id: str) -> None:
+        """Invalidate cached token for user (e.g., on 401 error)."""
+        self._token_cache.pop(user_id, None)
+
+
+class MCPToolWithOAuth:
+    """MCP Tool wrapper that handles OAuth authentication.
+
+    This class:
+    1. Discovers tools from MCPClient (AgentCore Gateway)
+    2. Creates Strands-compatible tool functions with @tool decorator
+    3. Injects OAuth token into tool calls
+    4. Returns AUTH_REQUIRED when user needs to authenticate
+    """
+
+    def __init__(
+        self,
+        mcp_client: MCPClient,
+        token_manager: OAuthTokenManager,
+    ):
+        self.mcp_client = mcp_client
+        self.token_manager = token_manager
+        self._tools_cache: list[Any] | None = None
+
+    def list_mcp_tools(self) -> list[Any]:
+        """Get tool definitions from the MCP Gateway."""
+        if self._tools_cache is not None:
+            return self._tools_cache
+
+        try:
+            self._tools_cache = self.mcp_client.list_tools_sync()
+            for t in self._tools_cache:
+                logger.info(f"Discovered MCP tool: {t.name}")
+            return self._tools_cache
+        except Exception as e:
+            logger.error(f"Failed to list MCP tools: {e}", exc_info=True)
+            return []
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Execute a tool with OAuth token injection.
+
+        Args:
+            tool_name: Name of the tool to execute
+            arguments: Tool arguments (excluding access_token)
+
+        Returns:
+            Tool result or AUTH_REQUIRED response
+        """
+        # Get user_id from context
+        user_id = current_user_id.get()
+
+        # Step 1: Get OAuth token
+        token, auth_url = self.token_manager.get_token_sync(user_id)
+
+        # Step 2: If auth required, return AUTH_REQUIRED as result (not exception)
+        if auth_url:
+            state = str(uuid.uuid4())
+            return AuthRequired(
+                auth_url=auth_url,
+                state=state,
+                tool_name=tool_name,
+                scopes=self.token_manager.scopes,
+            ).to_dict()
+
+        if not token:
+            return {"error": "OAuth認証に失敗しました。管理者にお問い合わせください。"}
+
+        # Step 3: Execute tool with token
+        try:
+            # Inject access_token into arguments
+            args_with_token = {**arguments, "access_token": token}
+
+            result = self.mcp_client.call_tool_sync(
+                tool_use_id=str(uuid.uuid4()),
+                name=tool_name,
+                arguments=args_with_token,
+            )
+
+            # Parse result - MCPToolResult can have various formats
+            result_dict: dict[str, Any]
+            if hasattr(result, "structuredContent"):
+                structured = getattr(result, "structuredContent", None)
+                if structured:
+                    result_dict = dict(structured)
+                    return result_dict
+            if hasattr(result, "content"):
+                content = getattr(result, "content", None)
+                if content:
+                    for content_item in content:
+                        if hasattr(content_item, "text"):
+                            text = getattr(content_item, "text", "")
+                            try:
+                                result_dict = json.loads(text)
+                                return result_dict
+                            except json.JSONDecodeError:
+                                return {"result": text}
+            # Fallback
+            if hasattr(result, "__iter__"):
+                result_dict = dict(result)
+                return result_dict
+            return {"result": str(result)}
+
+        except Exception as e:
+            error_str = str(e).lower()
+            # Step 4: Handle 401/unauthorized - invalidate token and return AUTH_REQUIRED
+            if "401" in error_str or "unauthorized" in error_str or "authentication" in error_str:
+                self.token_manager.invalidate_token(user_id)
+                _, auth_url = self.token_manager.get_token_sync(user_id)
+                if auth_url:
+                    state = str(uuid.uuid4())
+                    return AuthRequired(
+                        auth_url=auth_url,
+                        state=state,
+                        tool_name=tool_name,
+                        scopes=self.token_manager.scopes,
+                        message="認証トークンが期限切れです。再度認証してください。",
+                    ).to_dict()
+
+            logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
+            return {"error": str(e)}
+
+
+# Global instances
 _mcp_client: MCPClient | None = None
+_token_manager: OAuthTokenManager | None = None
+_mcp_tool_wrapper: MCPToolWithOAuth | None = None
 
 
-def get_mcp_client() -> MCPClient | None:
-    """Get or create MCP client for Calendar Gateway."""
-    global _mcp_client
-    if _mcp_client is not None:
-        return _mcp_client
+def get_mcp_tool_wrapper() -> MCPToolWithOAuth | None:
+    """Get or create MCP tool wrapper with OAuth handling."""
+    global _mcp_client, _token_manager, _mcp_tool_wrapper
+
+    if _mcp_tool_wrapper is not None:
+        return _mcp_tool_wrapper
 
     if not CALENDAR_GATEWAY_URL:
         logger.info("CALENDAR_GATEWAY_URL not set, skipping calendar tools")
@@ -60,342 +325,76 @@ def get_mcp_client() -> MCPClient | None:
         logger.info(f"Connecting to Calendar Gateway: {CALENDAR_GATEWAY_URL}")
         _mcp_client = MCPClient(lambda: streamablehttp_client(CALENDAR_GATEWAY_URL))
         _mcp_client.start()
-        logger.info("Calendar MCP client initialized successfully")
-        return _mcp_client
+
+        _token_manager = OAuthTokenManager(
+            oauth_provider=OAUTH_PROVIDER_NAME,
+            scopes=CALENDAR_SCOPES,
+        )
+
+        _mcp_tool_wrapper = MCPToolWithOAuth(
+            mcp_client=_mcp_client,
+            token_manager=_token_manager,
+        )
+
+        # Log discovered tools
+        tools = _mcp_tool_wrapper.list_mcp_tools()
+        logger.info(f"Discovered {len(tools)} tools from Gateway")
+
+        return _mcp_tool_wrapper
     except Exception as e:
-        logger.error(f"Failed to initialize Calendar MCP client: {e}", exc_info=True)
+        logger.error(f"Failed to initialize MCP tool wrapper: {e}", exc_info=True)
         return None
 
 
-async def get_oauth_token(user_id: str) -> tuple[str | None, str | None]:
-    """Get OAuth token for user, or return auth URL if not authenticated.
+def create_strands_tools(wrapper: MCPToolWithOAuth) -> list[Any]:
+    """Create Strands-compatible tool functions from MCP tools.
 
-    Args:
-        user_id: User identifier for OAuth session
-
-    Returns:
-        Tuple of (access_token, auth_url). One will be None.
-        - If authenticated: (token, None)
-        - If not authenticated: (None, auth_url)
+    Each MCP tool is wrapped with a function decorated with @tool
+    that handles OAuth and calls the MCP tool via the wrapper.
     """
-    try:
-        from bedrock_agentcore.services.identity import IdentityClient
+    mcp_tools = wrapper.list_mcp_tools()
+    strands_tools: list[Any] = []
 
-        region = os.environ.get("AWS_REGION", "ap-northeast-1")
-        client = IdentityClient(region)
+    for mcp_tool in mcp_tools:
+        tool_name = mcp_tool.name
+        tool_desc = mcp_tool.description or f"Execute {tool_name}"
 
-        # Get workload identity token
-        workload_token_resp = client.get_workload_access_token(
-            workload_name=os.environ.get("WORKLOAD_NAME", "default"),
-            user_id=user_id,
-        )
-        workload_token = workload_token_resp.get("token")
+        # Create wrapper function for this tool
+        # Note: We use a closure to capture tool_name
+        def make_tool_func(name: str, desc: str) -> Any:
+            @tool
+            def tool_func(**kwargs: Any) -> dict[str, Any]:
+                """Dynamic tool function that wraps MCP tool call with OAuth."""
+                return wrapper.call_tool(name, kwargs)
 
-        if not workload_token:
-            logger.error("Failed to get workload identity token")
-            return None, None
+            # Update function metadata using object.__setattr__ to bypass type restrictions
+            # The @tool decorator returns a DecoratedFunctionTool which wraps the function
+            with contextlib.suppress(AttributeError):
+                tool_func.name = name.replace("-", "_").replace("___", "_")  # type: ignore[attr-defined]
+            return tool_func
 
-        # Try to get OAuth token
-        auth_url = None
+        strands_tools.append(make_tool_func(tool_name, tool_desc))
+        logger.info(f"Created Strands tool: {tool_name}")
 
-        async def capture_auth_url(url: str) -> None:
-            nonlocal auth_url
-            auth_url = url
-            pending_auth_sessions[user_id] = url
-
-        try:
-            token = await client.get_token(
-                provider_name=OAUTH_PROVIDER_NAME,
-                scopes=CALENDAR_SCOPES,
-                agent_identity_token=workload_token,
-                auth_flow="USER_FEDERATION",
-                on_auth_url=capture_auth_url,
-            )
-            return token, None
-        except Exception:
-            if auth_url:
-                logger.info(f"OAuth authentication required for user {user_id}")
-                return None, auth_url
-            raise
-
-    except ImportError:
-        logger.warning("bedrock-agentcore SDK not available, OAuth disabled")
-        return None, None
-    except Exception as e:
-        logger.error(f"Error getting OAuth token: {e}", exc_info=True)
-        return None, None
-
-
-def get_oauth_token_sync(user_id: str) -> tuple[str | None, str | None]:
-    """Synchronous wrapper for get_oauth_token."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, get_oauth_token(user_id))
-                return future.result()
-        else:
-            return asyncio.run(get_oauth_token(user_id))
-    except Exception as e:
-        logger.error(f"Error in get_oauth_token_sync: {e}", exc_info=True)
-        return None, None
-
-
-# Calendar tools with OAuth integration
-@tool
-def list_calendar_events(
-    user_id: str,
-    time_min: str | None = None,
-    time_max: str | None = None,
-    max_results: int = 10,
-) -> dict[str, Any]:
-    """List calendar events within a time range.
-
-    Args:
-        user_id: User identifier for OAuth authentication
-        time_min: Start time in ISO format (default: now)
-        time_max: End time in ISO format (default: 7 days from now)
-        max_results: Maximum number of events to return (default: 10)
-
-    Returns:
-        Dictionary with events list or authentication URL if not authenticated
-    """
-    token, auth_url = get_oauth_token_sync(user_id)
-
-    if auth_url:
-        return {
-            "requires_auth": True,
-            "auth_url": auth_url,
-            "message": "Google Calendar認証が必要です。以下のURLをクリックして認証してください。",
-        }
-
-    if not token:
-        return {"error": "OAuth認証に失敗しました。"}
-
-    # Call MCP tool with token
-    client = get_mcp_client()
-    if not client:
-        return {"error": "Calendar Gateway is not available"}
-
-    try:
-        result = client.call_tool_sync(
-            tool_use_id=str(uuid.uuid4()),
-            name="calendar-tools___list_events",
-            arguments={
-                "access_token": token,
-                "time_min": time_min,
-                "time_max": time_max,
-                "max_results": max_results,
-            },
-        )
-        # MCPToolResult is a dict subclass with structuredContent
-        if "structuredContent" in result:
-            return result["structuredContent"]
-        return dict(result)
-    except Exception as e:
-        logger.error(f"Error calling list_events: {e}", exc_info=True)
-        return {"error": str(e)}
-
-
-@tool
-def create_calendar_event(
-    user_id: str,
-    summary: str,
-    start_time: str,
-    end_time: str,
-    description: str | None = None,
-    location: str | None = None,
-    timezone: str = "Asia/Tokyo",
-) -> dict[str, Any]:
-    """Create a new calendar event.
-
-    Args:
-        user_id: User identifier for OAuth authentication
-        summary: Event title
-        start_time: Start time in ISO format (e.g., 2024-12-01T10:00:00+09:00)
-        end_time: End time in ISO format
-        description: Event description (optional)
-        location: Event location (optional)
-        timezone: Timezone for the event (default: Asia/Tokyo)
-
-    Returns:
-        Dictionary with created event details or authentication URL
-    """
-    token, auth_url = get_oauth_token_sync(user_id)
-
-    if auth_url:
-        return {
-            "requires_auth": True,
-            "auth_url": auth_url,
-            "message": "Google Calendar認証が必要です。以下のURLをクリックして認証してください。",
-        }
-
-    if not token:
-        return {"error": "OAuth認証に失敗しました。"}
-
-    client = get_mcp_client()
-    if not client:
-        return {"error": "Calendar Gateway is not available"}
-
-    try:
-        result = client.call_tool_sync(
-            tool_use_id=str(uuid.uuid4()),
-            name="calendar-tools___create_event",
-            arguments={
-                "access_token": token,
-                "summary": summary,
-                "start_time": start_time,
-                "end_time": end_time,
-                "description": description,
-                "location": location,
-                "timezone": timezone,
-            },
-        )
-        if "structuredContent" in result:
-            return result["structuredContent"]
-        return dict(result)
-    except Exception as e:
-        logger.error(f"Error calling create_event: {e}", exc_info=True)
-        return {"error": str(e)}
-
-
-@tool
-def update_calendar_event(
-    user_id: str,
-    event_id: str,
-    summary: str | None = None,
-    start_time: str | None = None,
-    end_time: str | None = None,
-    description: str | None = None,
-    location: str | None = None,
-    timezone: str | None = None,
-) -> dict[str, Any]:
-    """Update an existing calendar event.
-
-    Args:
-        user_id: User identifier for OAuth authentication
-        event_id: ID of the event to update
-        summary: New event title (optional)
-        start_time: New start time in ISO format (optional)
-        end_time: New end time in ISO format (optional)
-        description: New event description (optional)
-        location: New event location (optional)
-        timezone: Timezone for the event (optional)
-
-    Returns:
-        Dictionary with updated event details or authentication URL
-    """
-    token, auth_url = get_oauth_token_sync(user_id)
-
-    if auth_url:
-        return {
-            "requires_auth": True,
-            "auth_url": auth_url,
-            "message": "Google Calendar認証が必要です。以下のURLをクリックして認証してください。",
-        }
-
-    if not token:
-        return {"error": "OAuth認証に失敗しました。"}
-
-    client = get_mcp_client()
-    if not client:
-        return {"error": "Calendar Gateway is not available"}
-
-    try:
-        params: dict[str, Any] = {
-            "access_token": token,
-            "event_id": event_id,
-        }
-        if summary is not None:
-            params["summary"] = summary
-        if start_time is not None:
-            params["start_time"] = start_time
-        if end_time is not None:
-            params["end_time"] = end_time
-        if description is not None:
-            params["description"] = description
-        if location is not None:
-            params["location"] = location
-        if timezone is not None:
-            params["timezone"] = timezone
-
-        result = client.call_tool_sync(
-            tool_use_id=str(uuid.uuid4()),
-            name="calendar-tools___update_event",
-            arguments=params,
-        )
-        if "structuredContent" in result:
-            return result["structuredContent"]
-        return dict(result)
-    except Exception as e:
-        logger.error(f"Error calling update_event: {e}", exc_info=True)
-        return {"error": str(e)}
-
-
-@tool
-def delete_calendar_event(user_id: str, event_id: str) -> dict[str, Any]:
-    """Delete a calendar event.
-
-    Args:
-        user_id: User identifier for OAuth authentication
-        event_id: ID of the event to delete
-
-    Returns:
-        Dictionary with deletion confirmation or authentication URL
-    """
-    token, auth_url = get_oauth_token_sync(user_id)
-
-    if auth_url:
-        return {
-            "requires_auth": True,
-            "auth_url": auth_url,
-            "message": "Google Calendar認証が必要です。以下のURLをクリックして認証してください。",
-        }
-
-    if not token:
-        return {"error": "OAuth認証に失敗しました。"}
-
-    client = get_mcp_client()
-    if not client:
-        return {"error": "Calendar Gateway is not available"}
-
-    try:
-        result = client.call_tool_sync(
-            tool_use_id=str(uuid.uuid4()),
-            name="calendar-tools___delete_event",
-            arguments={"access_token": token, "event_id": event_id},
-        )
-        if "structuredContent" in result:
-            return result["structuredContent"]
-        return dict(result)
-    except Exception as e:
-        logger.error(f"Error calling delete_event: {e}", exc_info=True)
-        return {"error": str(e)}
+    return strands_tools
 
 
 def initialize_agent() -> Agent:
-    """Initialize the Strands agent with calendar tools."""
-    calendar_tools = [
-        list_calendar_events,
-        create_calendar_event,
-        update_calendar_event,
-        delete_calendar_event,
-    ]
+    """Initialize the Strands agent with dynamically discovered calendar tools.
 
-    # Check if MCP client is available
-    client = get_mcp_client()
-    if client:
-        logger.info("Initializing agent with calendar tools (OAuth-enabled)")
-    else:
-        logger.warning("Initializing agent without calendar tools")
-        calendar_tools = []
+    Tools are fetched from the AgentCore Gateway via MCPClient.
+    Each tool is wrapped with OAuth handling.
+    """
+    wrapper = get_mcp_tool_wrapper()
 
-    if calendar_tools:
-        return Agent(tools=calendar_tools)
-    else:
-        return Agent()
+    if wrapper:
+        tools = create_strands_tools(wrapper)
+        if tools:
+            logger.info(f"Initializing agent with {len(tools)} calendar tools")
+            return Agent(tools=tools)
+
+    logger.warning("Initializing agent without calendar tools")
+    return Agent()
 
 
 # Initialize Strands agent
@@ -422,13 +421,14 @@ async def invoke_agent(request: InvocationRequest):
                 detail="No prompt found in input. Please provide a 'prompt' key in the input.",
             )
 
-        # Add user_id context to the message for tools
-        context_message = f"[user_id: {user_id}] {user_message}"
-
-        result = strands_agent(context_message)
-        response = {"message": result.message, "timestamp": datetime.now(UTC).isoformat()}
-
-        return InvocationResponse(output=response)
+        # Set user_id in context for tools to access
+        token = current_user_id.set(user_id)
+        try:
+            result = strands_agent(user_message)
+            response = {"message": result.message, "timestamp": datetime.now(UTC).isoformat()}
+            return InvocationResponse(output=response)
+        finally:
+            current_user_id.reset(token)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent processing failed: {str(e)}") from e

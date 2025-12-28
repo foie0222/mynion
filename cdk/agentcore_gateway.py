@@ -11,13 +11,14 @@ OAuth Authentication Flow:
 3. Gateway invokes Lambda using IAM role (GATEWAY_IAM_ROLE)
 4. Lambda uses access_token to authenticate with Google Calendar API
 
+Reference: https://dev.classmethod.jp/articles/amazon-bedrock-agentcore-gateway-lambda-tool/
+
 Note: The OAuth Credential Provider (GoogleCalendarProvider) is created separately
 via AgentCore Identity CLI, not in this CDK stack. The agent handles the OAuth
 flow including user consent and token refresh.
 """
 
 from pathlib import Path
-from typing import Any
 
 from aws_cdk import BundlingOptions, CfnOutput, Duration, Stack
 from aws_cdk import aws_bedrockagentcore as agentcore
@@ -100,134 +101,16 @@ class AgentCoreGatewayStack(Stack):
             ),
         )
 
-        # Common access_token property for all tools
-        # The access_token is obtained by the agent via AgentCore Identity and passed
-        # as a parameter to each tool call. See agent.py for the OAuth flow implementation.
-        access_token_prop = {
-            "type": "string",
-            "description": "Google OAuth access token obtained via AgentCore Identity",
-        }
-
-        # Define tool schemas for Calendar operations
-        tool_schemas: list[dict[str, Any]] = [
-            {
-                "name": "list_events",
-                "description": "List calendar events within a time range. Returns events from the user's primary calendar.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "access_token": access_token_prop,
-                        "time_min": {
-                            "type": "string",
-                            "description": "Start time in ISO format (e.g., 2024-12-01T00:00:00Z). Defaults to now.",
-                        },
-                        "time_max": {
-                            "type": "string",
-                            "description": "End time in ISO format. Defaults to 7 days from now.",
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of events to return. Default is 10.",
-                        },
-                    },
-                    "required": ["access_token"],
-                },
-            },
-            {
-                "name": "create_event",
-                "description": "Create a new calendar event with the specified title, start time, and end time.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "access_token": access_token_prop,
-                        "summary": {
-                            "type": "string",
-                            "description": "Title of the event",
-                        },
-                        "start_time": {
-                            "type": "string",
-                            "description": "Start time in ISO format (e.g., 2024-12-01T10:00:00+09:00)",
-                        },
-                        "end_time": {
-                            "type": "string",
-                            "description": "End time in ISO format",
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Description of the event (optional)",
-                        },
-                        "location": {
-                            "type": "string",
-                            "description": "Location of the event (optional)",
-                        },
-                        "timezone": {
-                            "type": "string",
-                            "description": "Timezone for the event (e.g., Asia/Tokyo, America/New_York). Default: Asia/Tokyo",
-                        },
-                    },
-                    "required": ["access_token", "summary", "start_time", "end_time"],
-                },
-            },
-            {
-                "name": "update_event",
-                "description": "Update an existing calendar event. Only provided fields will be updated.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "access_token": access_token_prop,
-                        "event_id": {
-                            "type": "string",
-                            "description": "ID of the event to update",
-                        },
-                        "summary": {
-                            "type": "string",
-                            "description": "New title of the event (optional)",
-                        },
-                        "start_time": {
-                            "type": "string",
-                            "description": "New start time in ISO format (optional)",
-                        },
-                        "end_time": {
-                            "type": "string",
-                            "description": "New end time in ISO format (optional)",
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "New description (optional)",
-                        },
-                        "location": {
-                            "type": "string",
-                            "description": "New location (optional)",
-                        },
-                        "timezone": {
-                            "type": "string",
-                            "description": "Timezone for the event. If not provided, preserves the original timezone.",
-                        },
-                    },
-                    "required": ["access_token", "event_id"],
-                },
-            },
-            {
-                "name": "delete_event",
-                "description": "Delete a calendar event by its ID.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "access_token": access_token_prop,
-                        "event_id": {
-                            "type": "string",
-                            "description": "ID of the event to delete",
-                        },
-                    },
-                    "required": ["access_token", "event_id"],
-                },
-            },
-        ]
-
-        # Create Lambda Target
+        # Create Lambda Target with tool schemas
+        # Reference: https://dev.classmethod.jp/articles/amazon-bedrock-agentcore-gateway-lambda-tool/
+        #
+        # Tool schema format follows the article pattern:
+        # - Each tool has name, description, and inputSchema
+        # - inputSchema defines type: object with properties and required fields
+        # - access_token is passed by the agent after obtaining OAuth token via AgentCore Identity
+        #
         # credential_provider_type="GATEWAY_IAM_ROLE" means the Gateway uses its IAM role
-        # to invoke the Lambda. This is separate from Google OAuth which is handled by
-        # the agent and passed as access_token parameter.
+        # to invoke the Lambda (not for Google OAuth, which is handled by the agent).
         calendar_target = agentcore.CfnGatewayTarget(
             self,
             "CalendarLambdaTarget",
@@ -239,24 +122,134 @@ class AgentCoreGatewayStack(Stack):
                         lambda_arn=calendar_lambda.function_arn,
                         tool_schema=agentcore.CfnGatewayTarget.ToolSchemaProperty(
                             inline_payload=[
+                                # list_events: List calendar events within a time range
                                 agentcore.CfnGatewayTarget.ToolDefinitionProperty(
-                                    name=tool["name"],
-                                    description=tool["description"],
+                                    name="list_events",
+                                    description="List calendar events within a time range. Returns events from the user's primary calendar.",
                                     input_schema=agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
-                                        type=tool["inputSchema"]["type"],
+                                        type="object",
                                         properties={
-                                            k: agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
-                                                type=v["type"],
-                                                description=v.get("description"),
-                                            )
-                                            for k, v in tool["inputSchema"]
-                                            .get("properties", {})
-                                            .items()
+                                            "access_token": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Google OAuth access token",
+                                            ),
+                                            "time_min": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Start time in ISO format (default: now)",
+                                            ),
+                                            "time_max": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="End time in ISO format (default: 7 days from now)",
+                                            ),
+                                            "max_results": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="integer",
+                                                description="Maximum number of events (default: 10)",
+                                            ),
                                         },
-                                        required=tool["inputSchema"].get("required"),
+                                        required=["access_token"],
                                     ),
-                                )
-                                for tool in tool_schemas
+                                ),
+                                # create_event: Create a new calendar event
+                                agentcore.CfnGatewayTarget.ToolDefinitionProperty(
+                                    name="create_event",
+                                    description="Create a new calendar event with the specified title, start time, and end time.",
+                                    input_schema=agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                        type="object",
+                                        properties={
+                                            "access_token": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Google OAuth access token",
+                                            ),
+                                            "summary": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Title of the event",
+                                            ),
+                                            "start_time": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Start time in ISO format (e.g., 2024-12-01T10:00:00+09:00)",
+                                            ),
+                                            "end_time": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="End time in ISO format",
+                                            ),
+                                            "description": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Description of the event (optional)",
+                                            ),
+                                            "location": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Location of the event (optional)",
+                                            ),
+                                            "timezone": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Timezone (e.g., Asia/Tokyo). Default: Asia/Tokyo",
+                                            ),
+                                        },
+                                        required=["access_token", "summary", "start_time", "end_time"],
+                                    ),
+                                ),
+                                # update_event: Update an existing calendar event
+                                agentcore.CfnGatewayTarget.ToolDefinitionProperty(
+                                    name="update_event",
+                                    description="Update an existing calendar event. Only provided fields will be updated.",
+                                    input_schema=agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                        type="object",
+                                        properties={
+                                            "access_token": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Google OAuth access token",
+                                            ),
+                                            "event_id": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="ID of the event to update",
+                                            ),
+                                            "summary": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="New title of the event (optional)",
+                                            ),
+                                            "start_time": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="New start time in ISO format (optional)",
+                                            ),
+                                            "end_time": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="New end time in ISO format (optional)",
+                                            ),
+                                            "description": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="New description (optional)",
+                                            ),
+                                            "location": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="New location (optional)",
+                                            ),
+                                            "timezone": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Timezone for the event (optional)",
+                                            ),
+                                        },
+                                        required=["access_token", "event_id"],
+                                    ),
+                                ),
+                                # delete_event: Delete a calendar event
+                                agentcore.CfnGatewayTarget.ToolDefinitionProperty(
+                                    name="delete_event",
+                                    description="Delete a calendar event by its ID.",
+                                    input_schema=agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                        type="object",
+                                        properties={
+                                            "access_token": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="Google OAuth access token",
+                                            ),
+                                            "event_id": agentcore.CfnGatewayTarget.SchemaDefinitionProperty(
+                                                type="string",
+                                                description="ID of the event to delete",
+                                            ),
+                                        },
+                                        required=["access_token", "event_id"],
+                                    ),
+                                ),
                             ]
                         ),
                     )

@@ -1,7 +1,9 @@
 """Lambda handler for Google Calendar MCP tools.
 
 This Lambda is invoked by AgentCore Gateway and provides calendar operations.
-OAuth access token is injected via credentials in the Lambda context.
+The tool name is passed via context.client_context.custom['bedrockAgentCoreToolName'].
+
+Reference: https://dev.classmethod.jp/articles/amazon-bedrock-agentcore-gateway-lambda-tool/
 """
 
 from __future__ import annotations
@@ -14,8 +16,22 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# Tool name delimiter used by AgentCore Gateway
-TOOL_NAME_DELIMITER = "___"
+# Tool name delimiter used by AgentCore Gateway (format: target_name__tool_name)
+# Reference: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-tool-naming.html
+TOOL_NAME_DELIMITER = "__"
+
+
+def success_response(body: dict[str, Any]) -> dict[str, Any]:
+    """Create a successful response in the format expected by AgentCore Gateway."""
+    return {"statusCode": 200, "body": json.dumps(body)}
+
+
+def error_response(
+    status_code: int, error: str, message: str, **kwargs: Any
+) -> dict[str, Any]:
+    """Create an error response in the format expected by AgentCore Gateway."""
+    body = {"error": error, "message": message, **kwargs}
+    return {"statusCode": status_code, "body": json.dumps(body)}
 
 
 def get_calendar_service(access_token: str) -> Any:
@@ -216,61 +232,56 @@ def delete_event(access_token: str, event_id: str) -> dict[str, Any]:
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Lambda handler for AgentCore Gateway MCP tool invocations.
 
+    The tool name is retrieved from context.client_context.custom['bedrockAgentCoreToolName'].
+    Format: "target_name___tool_name" (e.g., "calendar-tools___list_events")
+
     Args:
         event: Input parameters from the tool invocation
-        context: Lambda context with AgentCore metadata and credentials
+        context: Lambda context with AgentCore metadata
 
     Returns:
-        Tool execution result
+        Response with statusCode and body
     """
+    # Get tool name from context.client_context.custom['bedrockAgentCoreToolName']
+    tool_name = None
     try:
-        # Get tool name from context (format: target_name___tool_name)
-        client_context = getattr(context, "client_context", None)
-        if not client_context:
-            return {
-                "error": "Missing client context",
-                "message": "Lambda must be invoked through AgentCore Gateway",
-            }
+        if hasattr(context, "client_context") and context.client_context:
+            tool_name = context.client_context.custom["bedrockAgentCoreToolName"]
+            # Remove Gateway Target prefix (e.g., "calendar-tools___list_events" -> "list_events")
+            if TOOL_NAME_DELIMITER in tool_name:
+                tool_name = tool_name[tool_name.index(TOOL_NAME_DELIMITER) + len(TOOL_NAME_DELIMITER) :]
+    except (AttributeError, KeyError, TypeError) as e:
+        print(f"Error accessing client_context: {e}")
+        tool_name = None
 
-        custom = getattr(client_context, "custom", None)
-        if not custom:
-            return {
-                "error": "Missing custom context",
-                "message": "AgentCore Gateway context not found",
-            }
+    if not tool_name:
+        return error_response(
+            400,
+            "Missing tool name",
+            "Lambda must be invoked through AgentCore Gateway with bedrockAgentCoreToolName",
+        )
 
-        original_tool_name = custom.get("bedrockAgentCoreToolName")
-        if not original_tool_name:
-            return {
-                "error": "Missing tool name",
-                "message": "bedrockAgentCoreToolName not found in context",
-            }
+    # Get OAuth access token from event arguments
+    # access_token is passed as a tool parameter by the Agent
+    access_token = event.get("access_token")
+    if not access_token:
+        return error_response(
+            401,
+            "Missing access token",
+            "OAuth authentication required. Please provide access_token parameter.",
+        )
 
-        # Strip target prefix
-        if TOOL_NAME_DELIMITER in original_tool_name:
-            tool_name = original_tool_name.split(TOOL_NAME_DELIMITER, 1)[1]
-        else:
-            tool_name = original_tool_name
-
-        # Get OAuth access token from event arguments
-        # access_token is passed as a tool parameter by the Agent
-        access_token = event.get("access_token")
-        if not access_token:
-            return {
-                "error": "Missing access token",
-                "message": "OAuth authentication required. Please provide access_token parameter.",
-            }
-
-        # Route to appropriate tool handler
+    try:
+        # Route to appropriate tool handler based on tool name
         if tool_name == "list_events":
-            return list_events(
+            result = list_events(
                 access_token=access_token,
                 time_min=event.get("time_min"),
                 time_max=event.get("time_max"),
                 max_results=event.get("max_results", 10),
             )
         elif tool_name == "create_event":
-            return create_event(
+            result = create_event(
                 access_token=access_token,
                 summary=event["summary"],
                 start_time=event["start_time"],
@@ -280,7 +291,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 timezone=event.get("timezone", "Asia/Tokyo"),
             )
         elif tool_name == "update_event":
-            return update_event(
+            result = update_event(
                 access_token=access_token,
                 event_id=event["event_id"],
                 summary=event.get("summary"),
@@ -291,15 +302,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 timezone=event.get("timezone"),
             )
         elif tool_name == "delete_event":
-            return delete_event(
+            result = delete_event(
                 access_token=access_token,
                 event_id=event["event_id"],
             )
         else:
-            return {
-                "error": "Unknown tool",
-                "message": f"Tool '{tool_name}' is not supported",
-            }
+            return error_response(400, "Unknown tool", f"Tool '{tool_name}' is not supported")
+
+        return success_response(result)
 
     except HttpError as e:
         try:
@@ -307,18 +317,16 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             error_message = error_content.get("error", {}).get("message", "Unknown API error")
         except (json.JSONDecodeError, UnicodeDecodeError):
             error_message = "Google Calendar API request failed"
-        return {
-            "error": "Google Calendar API error",
-            "message": error_message,
-            "status": e.resp.status,
-        }
+        return error_response(
+            e.resp.status,
+            "Google Calendar API error",
+            error_message,
+        )
     except KeyError as e:
-        return {
-            "error": "Missing required parameter",
-            "message": f"Required parameter missing: {e}",
-        }
+        return error_response(
+            400,
+            "Missing required parameter",
+            f"Required parameter missing: {e}",
+        )
     except Exception as e:
-        return {
-            "error": "Internal error",
-            "message": str(e),
-        }
+        return error_response(500, "Internal error", str(e))

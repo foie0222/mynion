@@ -20,9 +20,26 @@ import httpx
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Initialize AWS clients
-lambda_client = boto3.client("lambda")
-secretsmanager_client = boto3.client("secretsmanager")
+# AWS clients (lazy initialized)
+_lambda_client = None
+_secretsmanager_client = None
+
+
+def get_lambda_client():
+    """Get Lambda client (lazy initialized)."""
+    global _lambda_client
+    if _lambda_client is None:
+        _lambda_client = boto3.client("lambda")
+    return _lambda_client
+
+
+def get_secretsmanager_client():
+    """Get Secrets Manager client (lazy initialized)."""
+    global _secretsmanager_client
+    if _secretsmanager_client is None:
+        _secretsmanager_client = boto3.client("secretsmanager")
+    return _secretsmanager_client
+
 
 # Environment variables
 SLACK_SECRET_ARN = os.environ.get("SLACK_SECRET_ARN", "")
@@ -50,7 +67,7 @@ def get_slack_credentials() -> dict[str, str]:
 
     try:
         logger.info(f"Loading Slack credentials from Secrets Manager: {SLACK_SECRET_ARN}")
-        response = secretsmanager_client.get_secret_value(SecretId=SLACK_SECRET_ARN)
+        response = get_secretsmanager_client().get_secret_value(SecretId=SLACK_SECRET_ARN)
         secret_string = response.get("SecretString", "{}")
         credentials: dict[str, str] = json.loads(secret_string)
         _slack_credentials = credentials
@@ -410,7 +427,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
             # Invoke Worker Lambda asynchronously (fire and forget)
             logger.info(f"Invoking Worker Lambda with payload: {worker_payload}")
-            lambda_client.invoke(
+            get_lambda_client().invoke(
                 FunctionName=WORKER_LAMBDA_ARN,
                 InvocationType="Event",  # Asynchronous invocation
                 Payload=json.dumps(worker_payload),

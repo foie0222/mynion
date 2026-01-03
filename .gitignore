@@ -33,6 +33,11 @@ Thumbs.db
 # Logs
 *.log
 
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
 # Environment variables
 .env
 .env.local

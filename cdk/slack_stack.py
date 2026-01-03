@@ -163,9 +163,9 @@ class SlackIntegrationStack(Stack):
         self,
         slack_secret: secretsmanager.Secret,
         worker_lambda: lambda_.DockerImageFunction,
-    ) -> lambda_.Function:
+    ) -> lambda_.DockerImageFunction:
         """
-        Create Lambda Receiver (Python).
+        Create Lambda Receiver from Docker Image.
 
         Args:
             slack_secret: Secrets Manager secret for Slack credentials
@@ -205,14 +205,12 @@ class SlackIntegrationStack(Stack):
             retention=logs.RetentionDays.ONE_WEEK,
         )
 
-        # Create Lambda function
-        receiver_lambda = lambda_.Function(
+        # Create Lambda function from Docker image
+        receiver_lambda = lambda_.DockerImageFunction(
             self,
             "ReceiverLambda",
-            runtime=lambda_.Runtime.PYTHON_3_11,
-            handler="receiver.handler",
-            code=lambda_.Code.from_asset(str(receiver_dir)),
-            timeout=Duration.seconds(5),  # Must respond within 3 seconds to Slack
+            code=lambda_.DockerImageCode.from_image_asset(str(receiver_dir)),
+            timeout=Duration.seconds(10),  # Must respond within 3 seconds to Slack
             memory_size=256,
             role=receiver_role,
             environment={
@@ -224,7 +222,7 @@ class SlackIntegrationStack(Stack):
 
         return receiver_lambda
 
-    def _create_api_gateway(self, receiver_lambda: lambda_.Function) -> apigw.RestApi:
+    def _create_api_gateway(self, receiver_lambda: lambda_.DockerImageFunction) -> apigw.RestApi:
         """
         Create API Gateway for Slack webhooks.
 

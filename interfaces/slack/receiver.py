@@ -344,6 +344,17 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         # Handle event callback
         if event_type == "event_callback":
             slack_event = body.get("event", {})
+            slack_event_type = slack_event.get("type", "")
+
+            # Skip app_mention events - we handle mentions via message events
+            # to avoid duplicate responses when both event types are subscribed
+            if slack_event_type == "app_mention":
+                logger.info("Skipping app_mention event (handled via message event)")
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({"ok": True}),
+                }
 
             # Get Slack credentials for bot user ID check
             credentials = get_slack_credentials()

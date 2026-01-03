@@ -5,13 +5,7 @@ Tests the is_bot_in_thread() and should_respond() functions
 to ensure correct bot response behavior.
 """
 
-# Import functions from receiver module
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
-
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from interfaces.slack.receiver import is_bot_in_thread, should_respond
 
@@ -188,4 +182,5 @@ class TestShouldRespond:
         result = should_respond(mock_client, event, "U_BOT_ID")
 
         assert result is True
-        # Should not call get_thread_replies since mention check comes first
+        # Mention check comes first, so get_thread_replies should not be called
+        mock_client.get_thread_replies.assert_not_called()

@@ -24,6 +24,10 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 # Delimiter used by AgentCore Gateway for tool names
 TOOL_NAME_DELIMITER = "___"
 
+# Timezone configuration (Japan Standard Time)
+TIMEZONE = "Asia/Tokyo"
+JST = timezone(timedelta(hours=9))
+
 
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """
@@ -40,7 +44,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         # Extract tool name from context
         tool_name = _get_tool_name(context)
         logger.info(f"Processing tool: {tool_name}")
-        logger.info(f"Event: {json.dumps(event)}")
+
+        # Mask sensitive fields before logging
+        event_for_log = {k: "***REDACTED***" if k == "access_token" else v for k, v in event.items()}
+        logger.info(f"Event: {json.dumps(event_for_log)}")
 
         # Dispatch to appropriate handler
         if tool_name == "get_events":
@@ -114,10 +121,9 @@ def get_events(event: dict[str, Any]) -> dict[str, Any]:
     end_date = event.get("end_date", start_date)
 
     # Convert to RFC3339 format
-    jst = timezone(timedelta(hours=9))
     try:
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=jst)
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=jst) + timedelta(days=1)
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=JST)
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=JST) + timedelta(days=1)
     except ValueError:
         return _error_response(
             400,
@@ -199,8 +205,8 @@ def create_event(event: dict[str, Any]) -> dict[str, Any]:
 
     calendar_event = {
         "summary": title,
-        "start": {"dateTime": start_time, "timeZone": "Asia/Tokyo"},
-        "end": {"dateTime": end_time, "timeZone": "Asia/Tokyo"},
+        "start": {"dateTime": start_time, "timeZone": TIMEZONE},
+        "end": {"dateTime": end_time, "timeZone": TIMEZONE},
     }
 
     if event.get("description"):
@@ -256,9 +262,9 @@ def update_event(event: dict[str, Any]) -> dict[str, Any]:
     if event.get("title"):
         existing["summary"] = event["title"]
     if event.get("start_time"):
-        existing["start"] = {"dateTime": event["start_time"], "timeZone": "Asia/Tokyo"}
+        existing["start"] = {"dateTime": event["start_time"], "timeZone": TIMEZONE}
     if event.get("end_time"):
-        existing["end"] = {"dateTime": event["end_time"], "timeZone": "Asia/Tokyo"}
+        existing["end"] = {"dateTime": event["end_time"], "timeZone": TIMEZONE}
     if event.get("description") is not None:
         existing["description"] = event["description"]
     if event.get("location") is not None:

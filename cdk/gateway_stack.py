@@ -304,6 +304,7 @@ class GatewayStack(Stack):
         self.gateway_id = gateway.ref
         self.gateway_endpoint = gateway.attr_gateway_url
         self.cognito_secret_arn = agent_secret.secret_arn
+        self.cognito_secret_name = agent_secret.secret_name
 
         # Outputs
         CfnOutput(

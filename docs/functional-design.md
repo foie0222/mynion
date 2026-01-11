@@ -34,6 +34,10 @@ graph TB
             TokenVault[Token Vault]
             CredProvider[OAuth2 Credential Provider]
         end
+
+        subgraph "OAuth Callback"
+            CallbackLambda[Callback Lambda]
+        end
     end
 
     subgraph External
@@ -52,6 +56,9 @@ graph TB
     CalendarLambda -->|カレンダー操作| GCal
     CalendarLambda -->|トークン取得| TokenVault
     CredProvider -->|OAuth2設定| GoogleAuth
+    GoogleAuth -->|認証後リダイレクト| CredProvider
+    CredProvider -->|session_id| CallbackLambda
+    CallbackLambda -->|CompleteResourceTokenAuth| TokenVault
     Worker -->|認証情報取得| Secrets
     Worker -->|応答投稿| SlackApp
     SlackApp -->|応答表示| User
@@ -145,7 +152,7 @@ sequenceDiagram
 - 元のメッセージのスレッドに返信
 - エラー時も適切なメッセージを返す
 
-### 4. Google OAuth2 認証フロー（AgentCore Identity）
+### 4. Google OAuth2 認証フロー（AgentCore Identity + Session Binding）
 
 ```mermaid
 sequenceDiagram
@@ -153,31 +160,41 @@ sequenceDiagram
     participant Slack as Slack
     participant Agent as Strands Agent
     participant Identity as AgentCore Identity
+    participant Callback as Callback Lambda
     participant TokenVault as Token Vault
     participant Google as Google OAuth2
 
-    Note over User,Google: 初回認証フロー（USER_FEDERATION）
+    Note over User,Google: 初回認証フロー（USER_FEDERATION + Session Binding）
     User->>Slack: カレンダー操作リクエスト
     Slack->>Agent: メッセージ転送
-    Agent->>Identity: アクセストークン要求
+    Agent->>Identity: GetResourceOauth2Token（custom_state=slack_user_id）
     Identity->>Identity: トークン未存在を確認
-    Identity-->>Agent: 認証URL返却
+    Identity-->>Agent: 認証URL + sessionUri
     Agent-->>Slack: 認証リンクを返信
     User->>Google: 認証リンクをクリック
     Google->>User: ログイン・同意画面
     User->>Google: 同意
-    Google->>Identity: 認証コード（Callback）
+    Google->>Identity: 認証コード（code, state）
     Identity->>Google: トークン交換
     Google-->>Identity: アクセストークン・リフレッシュトークン
+    Identity->>Callback: リダイレクト（session_id, user_id）
+    Callback->>Identity: CompleteResourceTokenAuth
     Identity->>TokenVault: トークン保存
+    Callback-->>User: 認証完了ページ表示
+    Note over Agent: Agent がポーリングでトークン取得
+    Agent->>Identity: GetResourceOauth2Token（sessionUri）
+    Identity-->>Agent: アクセストークン
     Note over User,Google: 以降はトークン自動取得
 ```
 
 **設計ポイント:**
 - **OAuth2 Credential Provider**: Google OAuth2 クライアント情報を登録
 - **USER_FEDERATION フロー**: ユーザー同意を経てトークンを取得
+- **Session Binding**: `CompleteResourceTokenAuth` API で認証セッションをユーザーにバインド
+  - 認証を開始したユーザーと完了したユーザーが同一であることを確認
+  - Authorization URL が他人に転送されても、セッションがバインドされないため安全
 - **Token Vault**: トークンを安全に保存・自動リフレッシュ
-- **セッション管理**: Slack スレッドIDをセッションIDとして使用
+- **セッション管理**: Slack user_id を `custom_state` で渡してセッション追跡
 
 ## コンポーネント設計
 
@@ -224,6 +241,15 @@ sequenceDiagram
 | USER_FEDERATION | ユーザー同意フローを処理 |
 | Token Vault | アクセストークンを安全に保存 |
 | トークン更新 | リフレッシュトークンで自動更新 |
+
+### OAuth Callback Lambda (`interfaces/slack/oauth_callback.py`)
+
+| 責務 | 説明 |
+|------|------|
+| session_id 取得 | AgentCore からリダイレクトされたセッションIDを取得 |
+| user_id 復元 | custom_state から Slack user_id を復元 |
+| Session Binding | CompleteResourceTokenAuth API でセッションをバインド |
+| 完了通知 | 認証完了ページを表示 |
 
 ### Calendar Lambda (`mcp/calendar/handler.py`)
 

@@ -6,11 +6,13 @@ This agent integrates with:
 - AgentCore Identity for Google Calendar OAuth authentication
 """
 
+import contextvars
 import json
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 import boto3
@@ -21,18 +23,40 @@ from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
 from strands.tools.mcp import MCPClient
 
-# Gateway configuration from environment variables
-GATEWAY_ENDPOINT = os.getenv(
-    "AGENTCORE_GATEWAY_ENDPOINT",
-    "https://mynion-calendar-gateway-zqgb38xjtt.gateway.bedrock-agentcore.ap-northeast-1.amazonaws.com/mcp",
+logger = logging.getLogger(__name__)
+
+# Context variable for current user_id (used in OAuth callback URL construction)
+_current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_current_user_id", default=None
 )
+
+
+class AuthRequiredError(Exception):
+    """Raised when user authentication is required."""
+
+    def __init__(self, auth_url: str):
+        self.auth_url = auth_url
+        super().__init__(f"認証が必要です: {auth_url}")
+
+
+def _require_env(name: str) -> str:
+    """Get required environment variable or raise RuntimeError."""
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Environment variable '{name}' must be set.")
+    return value
+
+
+# Gateway configuration from environment variables
+GATEWAY_ENDPOINT = _require_env("AGENTCORE_GATEWAY_ENDPOINT")
 AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-1")
-COGNITO_SECRET_NAME = os.getenv("COGNITO_SECRET_NAME", "mynion-gateway-cognito")
-GOOGLE_CREDENTIAL_PROVIDER = os.getenv("GOOGLE_CREDENTIAL_PROVIDER", "GoogleCalendarProvider")
+COGNITO_SECRET_NAME = _require_env("COGNITO_SECRET_NAME")
+GOOGLE_CREDENTIAL_PROVIDER = _require_env("GOOGLE_CREDENTIAL_PROVIDER")
+GOOGLE_OAUTH_CALLBACK_URL = _require_env("GOOGLE_OAUTH_CALLBACK_URL")
 
 # Cache for tokens
 _cognito_token_cache: dict[str, Any] = {}
-_google_token_cache: dict[str, str | None] = {"token": None, "auth_url": None}
+_google_token_cache: dict[str, str | None] = {"token": None}
 
 
 def get_cognito_credentials() -> dict[str, str]:
@@ -86,63 +110,62 @@ async def cognito_auth_streamablehttp_client(endpoint: str):
         yield streams  # (read, write, get_session_id)
 
 
-def _store_auth_url(url: str) -> None:
-    """Store the auth URL for later retrieval."""
-    _google_token_cache["auth_url"] = url
+def _raise_auth_required(url: str) -> None:
+    """Raise AuthRequiredError to stop polling and return auth URL immediately."""
+    raise AuthRequiredError(url)
 
 
-async def _get_google_token() -> str | None:
-    """Try to get Google OAuth token, returns None if auth required."""
+async def _get_google_token() -> str:
+    """Get Google OAuth token, raises AuthRequiredError if auth needed."""
     # Check cache first
     if _google_token_cache.get("token"):
-        return _google_token_cache["token"]
+        return cast(str, _google_token_cache["token"])
 
-    try:
+    # Get user_id for Session Binding (passed via custom_state)
+    user_id = _current_user_id.get()
 
-        @requires_access_token(
-            provider_name=GOOGLE_CREDENTIAL_PROVIDER,
-            scopes=["https://www.googleapis.com/auth/calendar"],
-            auth_flow="USER_FEDERATION",
-            on_auth_url=_store_auth_url,
-            force_authentication=False,
-        )
-        async def fetch_token(*, access_token: str) -> str:
-            return access_token
+    @requires_access_token(
+        provider_name=GOOGLE_CREDENTIAL_PROVIDER,
+        scopes=["https://www.googleapis.com/auth/calendar"],
+        auth_flow="USER_FEDERATION",
+        on_auth_url=_raise_auth_required,
+        force_authentication=False,
+        callback_url=GOOGLE_OAUTH_CALLBACK_URL,  # Plain URL, no query params
+        custom_state=user_id,  # Pass user_id via custom_state for Session Binding
+    )
+    async def fetch_token(*, access_token: str) -> str:
+        return access_token
 
-        token = await fetch_token()
-        _google_token_cache["token"] = token
-        _google_token_cache["auth_url"] = None
-        return cast(str, token)
-    except Exception:
-        # Auth required - URL should be stored via on_auth_url callback
-        return None
+    token = cast(str, await fetch_token())
+    _google_token_cache["token"] = token
+    return token
 
 
-def get_google_token_sync() -> str | None:
-    """Synchronously get Google OAuth token."""
+def get_google_token_sync() -> str:
+    """Synchronously get Google OAuth token with context preservation.
+
+    Raises:
+        AuthRequiredError: If user authentication is required.
+    """
     import asyncio
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
+    async def execute_async() -> str:
+        return await _get_google_token()
 
-    if loop and loop.is_running():
-        import concurrent.futures
+    def execute() -> str:
+        return asyncio.run(execute_async())
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, _get_google_token())
-            return future.result()
-    else:
-        return asyncio.run(_get_google_token())
+    # コンテキストを維持して別スレッドで実行
+    with ThreadPoolExecutor() as executor:
+        context = contextvars.copy_context()
+        future = executor.submit(context.run, execute)
+        return future.result()
 
 
 class AuthInjectingMCPClient(MCPClient):
     """MCPClient that automatically injects Google OAuth token into calendar tool calls."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._auth_error: str | None = None
 
     def call_tool_sync(
         self,
@@ -156,28 +179,15 @@ class AuthInjectingMCPClient(MCPClient):
 
         # Check if this is a calendar tool that needs access_token
         if name.startswith("calendar___") and arguments is not None:
-            # Try to get Google OAuth token
-            token = get_google_token_sync()
-
-            if token is None:
-                # Auth required - return auth URL as error
-                auth_url = _google_token_cache.get("auth_url")
-                if auth_url:
-                    self._auth_error = f"[認証が必要です] Google Calendar へのアクセスを許可してください: {auth_url}"
-                else:
-                    self._auth_error = (
-                        "Google Calendar の認証が必要ですが、認証URLを取得できませんでした。"
-                    )
-
-                # Return a result that indicates auth is needed
+            try:
+                token = get_google_token_sync()
+                arguments["access_token"] = token
+            except AuthRequiredError as e:
                 return MCPToolResult(
                     toolUseId=tool_use_id,
-                    content=[{"text": self._auth_error}],
+                    content=[{"text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"}],
                     status="error",
                 )
-
-            # Inject token into arguments
-            arguments["access_token"] = token
 
         return super().call_tool_sync(tool_use_id, name, arguments, read_timeout_seconds)
 
@@ -193,27 +203,15 @@ class AuthInjectingMCPClient(MCPClient):
 
         # Check if this is a calendar tool that needs access_token
         if name.startswith("calendar___") and arguments is not None:
-            # Try to get Google OAuth token
-            token = await _get_google_token()
-
-            if token is None:
-                # Auth required - return auth URL as error
-                auth_url = _google_token_cache.get("auth_url")
-                if auth_url:
-                    self._auth_error = f"[認証が必要です] Google Calendar へのアクセスを許可してください: {auth_url}"
-                else:
-                    self._auth_error = (
-                        "Google Calendar の認証が必要ですが、認証URLを取得できませんでした。"
-                    )
-
+            try:
+                token = await _get_google_token()
+                arguments["access_token"] = token
+            except AuthRequiredError as e:
                 return MCPToolResult(
                     toolUseId=tool_use_id,
-                    content=[{"text": self._auth_error}],
+                    content=[{"text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"}],
                     status="error",
                 )
-
-            # Inject token into arguments
-            arguments["access_token"] = token
 
         return await super().call_tool_async(tool_use_id, name, arguments, read_timeout_seconds)
 
@@ -225,19 +223,32 @@ if GATEWAY_ENDPOINT:
         lambda: cognito_auth_streamablehttp_client(GATEWAY_ENDPOINT),
     )
 
-# System prompt for the agent
-SYSTEM_PROMPT = """あなたは Mynion というSlackアシスタントです。ユーザーの質問に日本語で答えてください。
+# System prompt template for the agent
+SYSTEM_PROMPT_TEMPLATE = """あなたは Mynion というSlackアシスタントです。ユーザーの質問に日本語で答えてください。
+
+現在の日時: {current_datetime} (日本時間)
 
 重要: calendar___ で始まるツール（calendar___get_events, calendar___create_event など）を使う際、
 access_token パラメータは自動的に注入されます。ユーザーにトークンを求めないでください。
-カレンダー関連の質問には、直接ツールを呼び出して回答してください。"""
+カレンダー関連の質問には、直接ツールを呼び出して回答してください。
+「今日」「明日」などの相対的な日付は、上記の現在日時を基準に YYYY-MM-DD 形式に変換してください。"""
 
-# Initialize Strands agent with MCP tools from Gateway
-# Tools are defined on Gateway side, agent.py just handles auth injection
-strands_agent = Agent(
-    tools=[mcp_client] if mcp_client else [],
-    system_prompt=SYSTEM_PROMPT,
-)
+
+def _get_system_prompt() -> str:
+    """Generate system prompt with current datetime."""
+    jst = timezone(timedelta(hours=9))
+    now = datetime.now(jst)
+    current_datetime = now.strftime("%Y年%m月%d日 %H:%M")
+    return SYSTEM_PROMPT_TEMPLATE.format(current_datetime=current_datetime)
+
+
+def _create_agent() -> Agent:
+    """Create a new agent with current datetime in system prompt."""
+    return Agent(
+        tools=[mcp_client] if mcp_client else [],
+        system_prompt=_get_system_prompt(),
+    )
+
 
 # BedrockAgentCoreApp for handling runtime invocations
 app = BedrockAgentCoreApp()
@@ -251,13 +262,25 @@ async def agent_invocation(payload: dict[str, Any], context: Any) -> AsyncIterat
         yield {"error": "No prompt found in payload", "status": "error"}
         return
 
+    # Extract user_id from payload for OAuth callback URL construction
+    user_id = payload.get("user_id")
+    if user_id:
+        _current_user_id.set(user_id)
+        logger.info(f"Set current user_id: {user_id}")
+
     try:
+        # Create agent with current datetime in system prompt
+        agent = _create_agent()
+
         # Let the LLM decide which tools to use
         # Auth is handled transparently by AuthInjectingMCPClient
-        agent_result = strands_agent(user_message)
+        agent_result = agent(user_message)
         yield {"message": agent_result.message, "status": "success"}
     except Exception as e:
         yield {"error": str(e), "status": "error"}
+    finally:
+        # Clear user_id context after invocation
+        _current_user_id.set(None)
 
 
 if __name__ == "__main__":

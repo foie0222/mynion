@@ -1,0 +1,4 @@
+{
+  "mynion:googleCredentialProvider": "YourGoogleCredentialProviderName",
+  "mynion:googleOauthCallbackUrl": "https://bedrock-agentcore.ap-northeast-1.amazonaws.com/identities/oauth2/callback/your-callback-id"
+}

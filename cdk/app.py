@@ -14,21 +14,23 @@ env = cdk.Environment(
     region="ap-northeast-1",
 )
 
-# Create the AgentCore Runtime stack
-agentcore_stack = AgentCoreStack(
-    app,
-    "AgentCoreStack",
-    env=env,
-    description="Stack for deploying Mynion Strands Agent to AWS Bedrock AgentCore Runtime",
-)
-
-# Create the Gateway stack for Calendar MCP tools
+# Create the Gateway stack for Calendar MCP tools (must be created first)
 gateway_stack = GatewayStack(
     app,
     "GatewayStack",
     env=env,
     description="Stack for AgentCore Gateway with Calendar Lambda Target",
 )
+
+# Create the AgentCore Runtime stack (depends on Gateway stack)
+agentcore_stack = AgentCoreStack(
+    app,
+    "AgentCoreStack",
+    gateway_stack=gateway_stack,
+    env=env,
+    description="Stack for deploying Mynion Strands Agent to AWS Bedrock AgentCore Runtime",
+)
+agentcore_stack.add_dependency(gateway_stack)
 
 # Create the Slack integration stack
 # This stack depends on the AgentCore stack for runtime ID and ARN

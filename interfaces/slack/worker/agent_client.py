@@ -41,7 +41,7 @@ class AgentCoreClient:
             config=config,
         )
 
-    def invoke_agent(self, user_id: str, session_id: str, input_text: str) -> dict[str, Any] | str:
+    def invoke_agent(self, user_id: str, session_id: str, input_text: str) -> str:
         """
         Invoke the AgentCore Runtime.
 
@@ -51,16 +51,21 @@ class AgentCoreClient:
             input_text: User's input message
 
         Returns:
-            Response from AgentCore Runtime
+            Agent response text (always string)
         """
         try:
             logger.info(f"Invoking agent: session={session_id}, user={user_id}")
 
-            payload = json.dumps({"prompt": input_text}).encode()
+            # user_id is passed in two places:
+            # 1. payload: for agent.py to build OAuth callback URL
+            #    (runtimeUserId is NOT passed to agent via SDK headers)
+            # 2. runtimeUserId: for AgentCore session binding (CompleteResourceTokenAuth)
+            payload = json.dumps({"prompt": input_text, "user_id": user_id}).encode()
 
             response = self.client.invoke_agent_runtime(
                 agentRuntimeArn=self.endpoint_arn,
                 runtimeSessionId=session_id,
+                runtimeUserId=user_id,
                 payload=payload,
             )
 
@@ -73,15 +78,32 @@ class AgentCoreClient:
             logger.error(f"Error invoking agent: {str(e)}", exc_info=True)
             raise
 
-    def _parse_response(self, response: dict[str, Any]) -> dict[str, Any] | str:
+    def _extract_text(self, data: dict[str, Any]) -> str:
         """
-        Parse response from AgentCore Runtime.
+        Extract text from Strands Agent response format.
+
+        Args:
+            data: Response dict with format:
+                  {"message": {"role": "...", "content": [{"text": "..."}]}, "status": "..."}
+
+        Returns:
+            Extracted text or default message
+        """
+        message = data.get("message", {})
+        content = message.get("content", [])
+        if content and isinstance(content[0], dict):
+            return str(content[0].get("text", "応答がありませんでした。"))
+        return "応答がありませんでした。"
+
+    def _parse_response(self, response: dict[str, Any]) -> str:
+        """
+        Parse response from AgentCore Runtime and extract text.
 
         Args:
             response: Response from invoke_agent_runtime API
 
         Returns:
-            Parsed response (str for streaming, dict for JSON)
+            Agent response text (always string)
         """
         try:
             content_type = response.get("contentType", "")
@@ -97,16 +119,24 @@ class AgentCoreClient:
                             content.append(data)
                             logger.debug(f"Received chunk: {data}")
 
-                result = "\n".join(content) if content else "応答がありませんでした。"
+                if not content:
+                    return "応答がありませんでした。"
+
                 logger.info(f"Complete response received: {len(content)} chunks")
-                return result
+
+                try:
+                    last_chunk = json.loads(content[-1])
+                    return self._extract_text(last_chunk)
+                except (json.JSONDecodeError, IndexError, TypeError) as e:
+                    logger.warning(f"Failed to parse streaming response as JSON: {e}")
+                    return "\n".join(content)
 
             elif content_type == "application/json":
                 content = []
                 for chunk in response.get("response", []):
                     content.append(chunk.decode("utf-8"))
                 parsed: dict[str, Any] = json.loads("".join(content))
-                return parsed
+                return self._extract_text(parsed)
 
             else:
                 logger.warning(f"Unexpected content type: {content_type}")

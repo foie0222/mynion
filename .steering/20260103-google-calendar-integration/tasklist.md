@@ -69,9 +69,59 @@
   - MCPClient を継承し、calendar ツール呼び出し時に Google OAuth トークンを自動注入
   - トークン未取得時は認証 URL をエラーとして返却
 
+### Workload Identity 設定 ✅
+
+- [x] Workload Identity の `allowedResourceOauth2ReturnUrls` 設定
+  - AWS SDK for JS が BedrockAgentCoreControl 未対応のため、AwsCustomResource は使用不可
+  - 代わりに `cdk/post-deploy.sh` スクリプトを作成（AWS CLI 使用）
+  - CDK デプロイ後に `./cdk/post-deploy.sh` を実行して設定
+- [x] cdk.context.json による環境変数管理
+  - `mynion:googleCredentialProvider`: OAuth2 Credential Provider 名
+  - `mynion:googleOauthCallbackUrl`: AgentCore Identity コールバック URL
+
+## Phase 7: OAuth Callback Endpoint 実装
+
+### 問題の原因
+
+- AgentCore Identity は**セッションバインディング**パターンを要求
+- `CompleteResourceTokenAuth` API を呼び出さないとトークン取得が完了しない
+- 現状: Google 認証後に `authorizationCode` と `state` が null エラー
+
+### 実装タスク
+
+- [ ] `interfaces/slack/oauth_callback.py` 作成
+  - [ ] `session_id` クエリパラメータ取得
+  - [ ] `user_id` 取得（`custom_state` から復元）
+  - [ ] `CompleteResourceTokenAuth` API 呼び出し
+  - [ ] 成功/エラーレスポンス（HTML）
+
+- [ ] `cdk/slack_stack.py` 更新
+  - [ ] OAuth Callback Lambda 追加
+  - [ ] API Gateway に `/oauth/callback` エンドポイント追加
+  - [ ] IAM 権限追加（`CompleteResourceTokenAuth` 用）
+  - [ ] CloudFormation Output に Callback URL 追加
+
+- [ ] `cdk/post-deploy.sh` 更新
+  - [ ] `allowedResourceOauth2ReturnUrls` を新しい Callback URL に変更
+
+- [ ] `agent.py` 更新
+  - [ ] `callback_url` を新しいエンドポイントに変更
+  - [ ] `custom_state` パラメータで Slack user_id を渡す
+
+### CDK 再デプロイ
+
+- [ ] `cdk deploy SlackIntegrationStack` 実行
+- [ ] `./cdk/post-deploy.sh` 実行
+- [ ] Workload Identity の `allowedResourceOauth2ReturnUrls` 確認
+
 ### E2E テスト
 
 - [ ] OAuth 認証フローテスト
+  - [ ] Slack でカレンダー操作をリクエスト
+  - [ ] 認証 URL が表示される
+  - [ ] Google で認証
+  - [ ] 「認証完了」ページが表示される
+  - [ ] 再度カレンダー操作 → 成功
 - [ ] E2E テスト（Slack → カレンダー操作）
 
 ## 品質チェック ✅

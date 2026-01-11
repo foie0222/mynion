@@ -4,12 +4,20 @@ from aws_cdk import CfnOutput, Stack
 from aws_cdk import aws_bedrock_agentcore_alpha as agentcore
 from aws_cdk import aws_iam as iam
 from constructs import Construct
+from gateway_stack import GatewayStack
 
 
 class AgentCoreStack(Stack):
     """Stack for deploying Mynion agent to AWS Bedrock AgentCore Runtime"""
 
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        gateway_stack: GatewayStack,
+        **kwargs,
+    ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         # Get the path to the agent directory (parent of cdk directory)
@@ -106,6 +114,8 @@ class AgentCoreStack(Stack):
             iam.PolicyStatement(
                 sid="AgentCoreIdentityAccess",
                 actions=[
+                    "bedrock-agentcore:CreateWorkloadIdentity",
+                    "bedrock-agentcore:GetWorkloadIdentity",
                     "bedrock-agentcore:GetResourceOauth2Token",
                 ],
                 resources=[
@@ -148,6 +158,17 @@ class AgentCoreStack(Stack):
             agentcore.AgentRuntimeArtifact.from_asset(str(agent_dir))
         )
 
+        # Get configuration from CDK context (only for values not from other stacks)
+        google_credential_provider = self.node.try_get_context("mynion:googleCredentialProvider")
+        google_oauth_callback_url = self.node.try_get_context("mynion:googleOauthCallbackUrl")
+
+        if not all([google_credential_provider, google_oauth_callback_url]):
+            raise ValueError(
+                "Missing required context values. Please create cdk/cdk.context.json "
+                "with mynion:googleCredentialProvider and mynion:googleOauthCallbackUrl. "
+                "See cdk.context.json.example for reference."
+            )
+
         # Create the AgentCore Runtime
         self.runtime = agentcore.Runtime(
             self,
@@ -159,6 +180,12 @@ class AgentCoreStack(Stack):
             # Use public network configuration (default)
             # For VPC deployment, use RuntimeNetworkConfiguration.usingVpc()
             network_configuration=agentcore.RuntimeNetworkConfiguration.using_public_network(),
+            environment_variables={
+                "AGENTCORE_GATEWAY_ENDPOINT": gateway_stack.gateway_endpoint,
+                "COGNITO_SECRET_NAME": gateway_stack.cognito_secret_name,
+                "GOOGLE_CREDENTIAL_PROVIDER": google_credential_provider,
+                "GOOGLE_OAUTH_CALLBACK_URL": google_oauth_callback_url,
+            },
         )
 
         # Expose runtime properties for other stacks

@@ -148,7 +148,6 @@ def get_google_token_sync() -> str:
         AuthRequiredError: If user authentication is required.
     """
     import asyncio
-    import contextvars
     from concurrent.futures import ThreadPoolExecutor
 
     async def execute_async() -> str:

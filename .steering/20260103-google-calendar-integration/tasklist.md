@@ -79,40 +79,39 @@
   - `mynion:googleCredentialProvider`: OAuth2 Credential Provider 名
   - `mynion:googleOauthCallbackUrl`: AgentCore Identity コールバック URL
 
-## Phase 7: OAuth Callback Endpoint 実装
+## Phase 7: OAuth Callback Endpoint 実装 ✅
 
 ### 問題の原因
 
 - AgentCore Identity は**セッションバインディング**パターンを要求
 - `CompleteResourceTokenAuth` API を呼び出さないとトークン取得が完了しない
-- 現状: Google 認証後に `authorizationCode` と `state` が null エラー
 
 ### 実装タスク
 
-- [ ] `interfaces/slack/oauth_callback.py` 作成
-  - [ ] `session_id` クエリパラメータ取得
-  - [ ] `user_id` 取得（`custom_state` から復元）
-  - [ ] `CompleteResourceTokenAuth` API 呼び出し
-  - [ ] 成功/エラーレスポンス（HTML）
+- [x] `interfaces/slack/oauth_callback/handler.py` 作成
+  - [x] `session_id` クエリパラメータ取得
+  - [x] `user_id` 取得（`custom_state` から復元）
+  - [x] `CompleteResourceTokenAuth` API 呼び出し
+  - [x] 成功/エラーレスポンス（HTML）
 
-- [ ] `cdk/slack_stack.py` 更新
-  - [ ] OAuth Callback Lambda 追加
-  - [ ] API Gateway に `/oauth/callback` エンドポイント追加
-  - [ ] IAM 権限追加（`CompleteResourceTokenAuth` 用）
-  - [ ] CloudFormation Output に Callback URL 追加
+- [x] `cdk/slack_stack.py` 更新
+  - [x] OAuth Callback Lambda 追加
+  - [x] API Gateway に `/oauth/callback` エンドポイント追加
+  - [x] IAM 権限追加（`CompleteResourceTokenAuth` 用）
+  - [x] CloudFormation Output に Callback URL 追加
 
-- [ ] `cdk/post-deploy.sh` 更新
-  - [ ] `allowedResourceOauth2ReturnUrls` を新しい Callback URL に変更
+- [x] `cdk/post-deploy.sh` 更新
+  - [x] `allowedResourceOauth2ReturnUrls` を新しい Callback URL に変更
 
-- [ ] `agent.py` 更新
-  - [ ] `callback_url` を新しいエンドポイントに変更
-  - [ ] `custom_state` パラメータで Slack user_id を渡す
+- [x] `agent.py` 更新
+  - [x] `callback_url` を新しいエンドポイントに変更
+  - [x] `custom_state` パラメータで Slack user_id を渡す
 
 ### CDK 再デプロイ
 
-- [ ] `cdk deploy SlackIntegrationStack` 実行
-- [ ] `./cdk/post-deploy.sh` 実行
-- [ ] Workload Identity の `allowedResourceOauth2ReturnUrls` 確認
+- [x] `cdk deploy SlackIntegrationStack` 実行
+- [x] `./cdk/post-deploy.sh` 実行
+- [x] Workload Identity の `allowedResourceOauth2ReturnUrls` 確認
 
 ### E2E テスト
 
@@ -123,6 +122,17 @@
   - [ ] 「認証完了」ページが表示される
   - [ ] 再度カレンダー操作 → 成功
 - [ ] E2E テスト（Slack → カレンダー操作）
+
+## Phase 8: PRレビュー対応 ✅
+
+### セキュリティ・品質改善
+
+- [x] `contextvars` 重複インポート削除 (de74a58)
+- [x] トークンキャッシュのスレッドセーフ化 (f9137f9)
+  - [x] `threading.Lock` 追加
+  - [x] `_google_token_cache` を user_id 別に変更（ユーザー間トークン共有防止）
+- [x] `asyncio.run()` ネスト問題修正 (efd29c3)
+  - [x] イベントループ有無を検出して適切に処理
 
 ## 品質チェック ✅
 

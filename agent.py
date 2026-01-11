@@ -185,7 +185,11 @@ class AuthInjectingMCPClient(MCPClient):
             except AuthRequiredError as e:
                 return MCPToolResult(
                     toolUseId=tool_use_id,
-                    content=[{"text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"}],
+                    content=[
+                        {
+                            "text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"
+                        }
+                    ],
                     status="error",
                 )
 
@@ -209,7 +213,11 @@ class AuthInjectingMCPClient(MCPClient):
             except AuthRequiredError as e:
                 return MCPToolResult(
                     toolUseId=tool_use_id,
-                    content=[{"text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"}],
+                    content=[
+                        {
+                            "text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"
+                        }
+                    ],
                     status="error",
                 )
 

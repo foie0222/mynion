@@ -240,7 +240,9 @@ class SlackIntegrationStack(Stack):
             Lambda function
         """
         # Get oauth_callback code path
-        callback_code_path = Path(__file__).parent.parent / "interfaces" / "slack" / "oauth_callback"
+        callback_code_path = (
+            Path(__file__).parent.parent / "interfaces" / "slack" / "oauth_callback"
+        )
 
         # Create execution role for OAuth Callback Lambda
         callback_role = iam.Role(

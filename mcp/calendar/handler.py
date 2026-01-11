@@ -46,7 +46,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.info(f"Processing tool: {tool_name}")
 
         # Mask sensitive fields before logging
-        event_for_log = {k: "***REDACTED***" if k == "access_token" else v for k, v in event.items()}
+        event_for_log = {
+            k: "***REDACTED***" if k == "access_token" else v for k, v in event.items()
+        }
         logger.info(f"Event: {json.dumps(event_for_log)}")
 
         # Dispatch to appropriate handler

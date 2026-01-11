@@ -115,8 +115,14 @@ def get_events(event: dict[str, Any]) -> dict[str, Any]:
 
     # Convert to RFC3339 format
     jst = timezone(timedelta(hours=9))
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=jst)
-    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=jst) + timedelta(days=1)
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=jst)
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=jst) + timedelta(days=1)
+    except ValueError:
+        return _error_response(
+            400,
+            "start_date and end_date must be in YYYY-MM-DD format",
+        )
 
     time_min = start_dt.isoformat()
     time_max = end_dt.isoformat()

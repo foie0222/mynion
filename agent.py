@@ -156,19 +156,31 @@ async def _get_google_token() -> str:
 def get_google_token_sync() -> str:
     """Synchronously get Google OAuth token with context preservation.
 
+    Handles both cases:
+    - No event loop running: uses asyncio.run() directly
+    - Event loop already running: uses ThreadPoolExecutor to avoid nested asyncio.run()
+
     Raises:
         AuthRequiredError: If user authentication is required.
     """
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
 
-    async def execute_async() -> str:
-        return await _get_google_token()
+    # Check if we're already in an event loop
+    try:
+        asyncio.get_running_loop()
+        in_event_loop = True
+    except RuntimeError:
+        in_event_loop = False
 
+    if not in_event_loop:
+        # No event loop - safe to use asyncio.run() directly
+        return asyncio.run(_get_google_token())
+
+    # Already in event loop - use thread to avoid nested asyncio.run()
     def execute() -> str:
-        return asyncio.run(execute_async())
+        return asyncio.run(_get_google_token())
 
-    # コンテキストを維持して別スレッドで実行
     with ThreadPoolExecutor() as executor:
         context = contextvars.copy_context()
         future = executor.submit(context.run, execute)

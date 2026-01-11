@@ -47,9 +47,9 @@ dependencies = [
     "uvicorn[standard]>=0.38.0",
     "slack-bolt>=1.21.4",
     "boto3>=1.37.8",
-    "aws-cdk-lib>=2.224.0",
+    "aws-cdk-lib>=2.233.0",
     "constructs>=10.4.3",
-    "aws-cdk-aws-bedrock-agentcore-alpha==2.224.0a0",
+    "aws-cdk-aws-bedrock-agentcore-alpha>=2.233.0a0",
 ]
 ```
 
@@ -112,12 +112,13 @@ dependencies = [
 ### 認証・認可
 
 #### Gateway Inbound 認証
-- IAM 認証（SigV4 署名）
-- Agent の IAM ロールに Gateway 呼び出し権限を付与
+- CUSTOM_JWT 認証（Cognito OAuth トークン）
+- Cognito User Pool で `client_credentials` フローを使用
+- Agent が Secrets Manager から認証情報を取得し、Cognito からトークンを取得
 
 #### Google Calendar 認証
-- AgentCore Identity による OAuth2
-- USER_FEDERATION フローでユーザー同意を取得
+- AgentCore Identity による OAuth2（予定）
+- 現状は Agent 側で Google OAuth トークンを取得し、ツール引数として渡す
 - Token Vault でトークンを管理
 
 ### セキュリティ要件

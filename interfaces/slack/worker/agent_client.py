@@ -56,7 +56,7 @@ class AgentCoreClient:
         try:
             logger.info(f"Invoking agent: session={session_id}, user={user_id}")
 
-            payload = json.dumps({"input": {"prompt": input_text}}).encode()
+            payload = json.dumps({"prompt": input_text}).encode()
 
             response = self.client.invoke_agent_runtime(
                 agentRuntimeArn=self.endpoint_arn,

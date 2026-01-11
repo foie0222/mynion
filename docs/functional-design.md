@@ -101,7 +101,7 @@ sequenceDiagram
     Runtime->>Agent: リクエスト処理
     Agent->>Bedrock: モデル推論
     Bedrock-->>Agent: 応答生成（ツール呼び出し判断）
-    Agent->>Gateway: MCPClient経由でツール呼び出し（IAM認証）
+    Agent->>Gateway: MCPClient経由でツール呼び出し（CUSTOM_JWT認証）
     Gateway->>CalLambda: Lambda Target 実行
     CalLambda->>TokenVault: Google アクセストークン取得
     TokenVault-->>CalLambda: アクセストークン
@@ -119,7 +119,7 @@ sequenceDiagram
 - Strands Agent は MCPClient 経由で AgentCore Gateway に接続
 - Gateway が Lambda ターゲットとしてカレンダー操作ツールを提供
 - MCP 標準プロトコルによるツール呼び出しで拡張性を確保
-- **Inbound Auth**: IAM 認証で Gateway アクセスを保護（SigV4署名）
+- **Inbound Auth**: CUSTOM_JWT 認証で Gateway アクセスを保護（Cognito OAuth トークン）
 - **Outbound Auth**: AgentCore Identity 経由で Google OAuth2 トークンを取得
 - **セッション ID 生成**: Slack thread_ts（16文字程度）を UUID v5 で変換し、AgentCore の 33 文字以上要件を満たす
   - Namespace: 固定 UUID（`SLACK_SESSION_NAMESPACE`）
@@ -213,7 +213,7 @@ sequenceDiagram
 |------|------|
 | MCP サーバー | Strands Agent に MCP エンドポイントを提供 |
 | ツール管理 | Lambda ターゲットをツールとして公開 |
-| Inbound 認証 | IAM 認証（SigV4）で Gateway アクセスを保護 |
+| Inbound 認証 | CUSTOM_JWT 認証（Cognito OAuth トークン）で Gateway アクセスを保護 |
 | セマンティック検索 | ツールの自動選択をサポート |
 
 ### AgentCore Identity
@@ -368,8 +368,7 @@ Response:
 ```
 POST {gateway_url}
 Content-Type: application/json
-X-Amz-Date: 20251230T120000Z
-Authorization: AWS4-HMAC-SHA256 Credential=.../bedrock-agentcore/aws4_request, ...
+Authorization: Bearer {cognito_access_token}
 
 {
   "jsonrpc": "2.0",
@@ -398,8 +397,10 @@ Response:
 ```
 
 **認証方式:**
-- **Inbound（Agent → Gateway）**: IAM 認証（SigV4署名）
-- **Outbound（Gateway → Google）**: AgentCore Identity による OAuth2 トークン
+- **Inbound（Agent → Gateway）**: CUSTOM_JWT 認証（Cognito OAuth トークン）
+  - Cognito User Pool の `client_credentials` フローでトークン取得
+  - Secrets Manager に認証情報（client_id, client_secret, token_endpoint）を保存
+- **Outbound（Gateway → Google）**: Agent がツール引数として Google OAuth トークンを渡す
 
 ### ヘルスチェック
 

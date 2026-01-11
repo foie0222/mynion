@@ -100,6 +100,48 @@ class AgentCoreStack(Stack):
             )
         )
 
+        # Grant permissions for AgentCore Identity (Token Vault access)
+        # Required for OAuth2 token retrieval from credential providers
+        execution_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="AgentCoreIdentityAccess",
+                actions=[
+                    "bedrock-agentcore:GetResourceOauth2Token",
+                ],
+                resources=[
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:workload-identity-directory/default/workload-identity/*",
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:token-vault/default/oauth2credentialprovider/*",
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:workload-identity-directory/default",
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:token-vault/default",
+                ],
+            )
+        )
+
+        # Grant permissions to read OAuth2 credential provider secrets
+        execution_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="SecretsManagerAccess",
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    f"arn:aws:secretsmanager:{Stack.of(self).region}:{Stack.of(self).account}:secret:bedrock-agentcore-identity!default/oauth2/*",
+                    f"arn:aws:secretsmanager:{Stack.of(self).region}:{Stack.of(self).account}:secret:mynion-gateway-cognito-*",
+                ],
+            )
+        )
+
+        # Grant permissions to invoke AgentCore Gateway
+        execution_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="AgentCoreGatewayAccess",
+                actions=[
+                    "bedrock-agentcore:InvokeGateway",
+                ],
+                resources=[
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:gateway/*",
+                ],
+            )
+        )
+
         # Create the agent runtime artifact from local Docker context
         # This will build the Docker image from the Dockerfile and push it to ECR
         agent_runtime_artifact: agentcore.AgentRuntimeArtifact = (

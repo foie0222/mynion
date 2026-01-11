@@ -10,6 +10,7 @@ import contextvars
 import json
 import logging
 import os
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -54,9 +55,10 @@ COGNITO_SECRET_NAME = _require_env("COGNITO_SECRET_NAME")
 GOOGLE_CREDENTIAL_PROVIDER = _require_env("GOOGLE_CREDENTIAL_PROVIDER")
 GOOGLE_OAUTH_CALLBACK_URL = _require_env("GOOGLE_OAUTH_CALLBACK_URL")
 
-# Cache for tokens
+# Cache for tokens (with thread safety)
+_cache_lock = threading.Lock()
 _cognito_token_cache: dict[str, Any] = {}
-_google_token_cache: dict[str, str | None] = {"token": None}
+_google_token_cache: dict[str, str] = {}  # user_id -> token
 
 
 def get_cognito_credentials() -> dict[str, str]:
@@ -67,37 +69,38 @@ def get_cognito_credentials() -> dict[str, str]:
 
 
 def get_cognito_access_token() -> str:
-    """Get access token from Cognito using client_credentials flow."""
+    """Get access token from Cognito using client_credentials flow (thread-safe)."""
     import time
 
-    # Check cache
-    if (
-        _cognito_token_cache.get("token")
-        and _cognito_token_cache.get("expires_at", 0) > time.time()
-    ):
-        return cast(str, _cognito_token_cache["token"])
+    with _cache_lock:
+        # Check cache
+        if (
+            _cognito_token_cache.get("token")
+            and _cognito_token_cache.get("expires_at", 0) > time.time()
+        ):
+            return cast(str, _cognito_token_cache["token"])
 
-    # Get credentials and fetch new token
-    creds = get_cognito_credentials()
-    response = httpx.post(
-        creds["token_endpoint"],
-        data={
-            "grant_type": "client_credentials",
-            "client_id": creds["client_id"],
-            "client_secret": creds["client_secret"],
-            "scope": creds["scope"],
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    response.raise_for_status()
-    token_data = response.json()
+        # Get credentials and fetch new token
+        creds = get_cognito_credentials()
+        response = httpx.post(
+            creds["token_endpoint"],
+            data={
+                "grant_type": "client_credentials",
+                "client_id": creds["client_id"],
+                "client_secret": creds["client_secret"],
+                "scope": creds["scope"],
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        token_data = response.json()
 
-    # Cache the token (with 5 minute buffer before expiry)
-    access_token = cast(str, token_data["access_token"])
-    _cognito_token_cache["token"] = access_token
-    _cognito_token_cache["expires_at"] = time.time() + token_data.get("expires_in", 3600) - 300
+        # Cache the token (with 5 minute buffer before expiry)
+        access_token = cast(str, token_data["access_token"])
+        _cognito_token_cache["token"] = access_token
+        _cognito_token_cache["expires_at"] = time.time() + token_data.get("expires_in", 3600) - 300
 
-    return access_token
+        return access_token
 
 
 @asynccontextmanager
@@ -116,13 +119,17 @@ def _raise_auth_required(url: str) -> None:
 
 
 async def _get_google_token() -> str:
-    """Get Google OAuth token, raises AuthRequiredError if auth needed."""
-    # Check cache first
-    if _google_token_cache.get("token"):
-        return cast(str, _google_token_cache["token"])
+    """Get Google OAuth token, raises AuthRequiredError if auth needed (thread-safe).
 
+    Tokens are cached per user_id to prevent cross-user token leakage.
+    """
     # Get user_id for Session Binding (passed via custom_state)
     user_id = _current_user_id.get()
+
+    # Check cache first (thread-safe)
+    with _cache_lock:
+        if user_id and user_id in _google_token_cache:
+            return _google_token_cache[user_id]
 
     @requires_access_token(
         provider_name=GOOGLE_CREDENTIAL_PROVIDER,
@@ -137,7 +144,12 @@ async def _get_google_token() -> str:
         return access_token
 
     token = cast(str, await fetch_token())
-    _google_token_cache["token"] = token
+
+    # Cache the token per user_id (thread-safe)
+    with _cache_lock:
+        if user_id:
+            _google_token_cache[user_id] = token
+
     return token
 
 

@@ -287,7 +287,9 @@ app = BedrockAgentCoreApp()
 
 
 @app.entrypoint
-async def agent_invocation(payload: dict[str, Any], context: RequestContext) -> AsyncIterator[dict[str, Any]]:
+async def agent_invocation(
+    payload: dict[str, Any], context: RequestContext
+) -> AsyncIterator[dict[str, Any]]:
     """Main entrypoint for agent invocations."""
     user_message = payload.get("prompt", "")
     if not user_message:

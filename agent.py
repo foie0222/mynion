@@ -311,7 +311,11 @@ async def agent_invocation(
         agent_result = agent(user_message)
         yield {"message": agent_result.message, "status": "success"}
     except Exception as e:
-        yield {"error": str(e), "status": "error"}
+        logger.error(f"Agent invocation failed: {e}", exc_info=True)
+        yield {
+            "error": "処理中にエラーが発生しました。しばらく経ってから再度お試しください。",
+            "status": "error",
+        }
     finally:
         # Clear user_id context after invocation
         _current_user_id.set(None)

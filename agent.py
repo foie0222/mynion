@@ -20,6 +20,7 @@ import boto3
 import httpx
 from bedrock_agentcore.identity.auth import requires_access_token
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from bedrock_agentcore.runtime.context import RequestContext
 from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
 from strands.tools.mcp import MCPClient
@@ -286,7 +287,9 @@ app = BedrockAgentCoreApp()
 
 
 @app.entrypoint
-async def agent_invocation(payload: dict[str, Any], context: Any) -> AsyncIterator[dict[str, Any]]:
+async def agent_invocation(
+    payload: dict[str, Any], context: RequestContext
+) -> AsyncIterator[dict[str, Any]]:
     """Main entrypoint for agent invocations."""
     user_message = payload.get("prompt", "")
     if not user_message:

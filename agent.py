@@ -92,6 +92,7 @@ def get_cognito_access_token() -> str:
                 "scope": creds["scope"],
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30.0,
         )
         response.raise_for_status()
         token_data = response.json()

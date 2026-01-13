@@ -154,8 +154,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         query_params = event.get("queryStringParameters") or {}
         session_id = query_params.get("session_id")
         # user_id is passed via custom_state during auth initiation
-        # AgentCore returns it as 'state' or 'custom_state' parameter
-        user_id = query_params.get("state") or query_params.get("custom_state")
+        # AgentCore returns it as the standard OAuth2 'state' parameter
+        user_id = query_params.get("state")
 
         logger.info(f"session_id: {session_id}, user_id (from state): {user_id}")
 

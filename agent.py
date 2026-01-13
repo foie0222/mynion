@@ -310,6 +310,12 @@ async def agent_invocation(
         # Auth is handled transparently by AuthInjectingMCPClient
         agent_result = agent(user_message)
         yield {"message": agent_result.message, "status": "success"}
+    except AuthRequiredError as e:
+        logger.info(f"Authentication required: {e.auth_url}")
+        yield {
+            "error": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}",
+            "status": "error",
+        }
     except Exception as e:
         logger.error(f"Agent invocation failed: {e}", exc_info=True)
         yield {

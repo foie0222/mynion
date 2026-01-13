@@ -220,34 +220,6 @@ class AuthInjectingMCPClient(MCPClient):
 
         return super().call_tool_sync(tool_use_id, name, arguments, read_timeout_seconds)
 
-    async def call_tool_async(
-        self,
-        tool_use_id: str,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-        read_timeout_seconds: timedelta | None = None,
-    ) -> Any:
-        """Override to inject access_token for calendar tools."""
-        from strands.tools.mcp.mcp_types import MCPToolResult
-
-        # Check if this is a calendar tool that needs access_token
-        if name.startswith("calendar___") and arguments is not None:
-            try:
-                token = await _get_google_token()
-                arguments["access_token"] = token
-            except AuthRequiredError as e:
-                return MCPToolResult(
-                    toolUseId=tool_use_id,
-                    content=[
-                        {
-                            "text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"
-                        }
-                    ],
-                    status="error",
-                )
-
-        return await super().call_tool_async(tool_use_id, name, arguments, read_timeout_seconds)
-
 
 # Initialize MCP client for AgentCore Gateway with auth injection
 mcp_client: AuthInjectingMCPClient | None = None

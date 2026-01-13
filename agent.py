@@ -32,6 +32,11 @@ _current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_user_id", default=None
 )
 
+# Authentication error message template
+AUTH_REQUIRED_MESSAGE_TEMPLATE = (
+    "[認証が必要です] Google Calendar へのアクセスを許可してください: {auth_url}"
+)
+
 
 class AuthRequiredError(Exception):
     """Raised when user authentication is required."""
@@ -209,11 +214,7 @@ class AuthInjectingMCPClient(MCPClient):
             except AuthRequiredError as e:
                 return MCPToolResult(
                     toolUseId=tool_use_id,
-                    content=[
-                        {
-                            "text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"
-                        }
-                    ],
+                    content=[{"text": AUTH_REQUIRED_MESSAGE_TEMPLATE.format(auth_url=e.auth_url)}],
                     status="error",
                 )
 
@@ -237,11 +238,7 @@ class AuthInjectingMCPClient(MCPClient):
             except AuthRequiredError as e:
                 return MCPToolResult(
                     toolUseId=tool_use_id,
-                    content=[
-                        {
-                            "text": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}"
-                        }
-                    ],
+                    content=[{"text": AUTH_REQUIRED_MESSAGE_TEMPLATE.format(auth_url=e.auth_url)}],
                     status="error",
                 )
 
@@ -313,7 +310,7 @@ async def agent_invocation(
     except AuthRequiredError as e:
         logger.info(f"Authentication required: {e.auth_url}")
         yield {
-            "error": f"[認証が必要です] Google Calendar へのアクセスを許可してください: {e.auth_url}",
+            "error": AUTH_REQUIRED_MESSAGE_TEMPLATE.format(auth_url=e.auth_url),
             "status": "error",
         }
     except Exception as e:

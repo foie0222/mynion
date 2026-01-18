@@ -13,9 +13,13 @@ dependencies = [
     # Slack integration dependencies
     "slack-bolt>=1.21.4",
     "boto3>=1.37.8",
-    "aws-cdk-lib>=2.224.0",
+    "aws-cdk-lib>=2.233.0",
     "constructs>=10.4.3",
-    "aws-cdk-aws-bedrock-agentcore-alpha==2.224.0a0",
+    "aws-cdk-aws-bedrock-agentcore-alpha>=2.233.0a0",
+    # MCP Gateway integration
+    "mcp-proxy-for-aws>=0.1.0",
+    # AgentCore Runtime SDK
+    "bedrock-agentcore>=0.1.0",
 ]
 
 [dependency-groups]
@@ -44,14 +48,19 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 exclude = [
-    "cdk\\.out/.*",
-    "\\.venv/.*",
+    "cdk\\.out",
+    "cdk/cdk\\.out",
+    "\\.venv",
 ]
 
 [[tool.mypy.overrides]]
 module = [
     "strands.*",
     "aws_cdk.*",
+    "mcp_proxy_for_aws.*",
+    "bedrock_agentcore.*",
+    "google.*",
+    "googleapiclient.*",
 ]
 ignore_missing_imports = true
 

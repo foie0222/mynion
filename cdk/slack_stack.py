@@ -4,9 +4,10 @@ CDK Stack for Slack integration with Mynion AgentCore Runtime.
 This stack creates:
 1. Lambda Receiver (Python) - handles Slack events, returns 200 OK immediately
 2. Lambda Worker (Container) - processes events, invokes AgentCore Runtime
-3. API Gateway - receives Slack webhooks
-4. Secrets Manager - stores Slack credentials
-5. IAM Roles - appropriate permissions for all components
+3. Lambda OAuth Callback - handles OAuth2 callback from AgentCore Identity
+4. API Gateway - receives Slack webhooks and OAuth callbacks
+5. Secrets Manager - stores Slack credentials
+6. IAM Roles - appropriate permissions for all components
 """
 
 from pathlib import Path
@@ -55,8 +56,14 @@ class SlackIntegrationStack(Stack):
         # Create Lambda Receiver (Python)
         receiver_lambda = self._create_receiver_lambda(slack_secret, worker_lambda)
 
-        # Create API Gateway for Slack webhooks
-        api = self._create_api_gateway(receiver_lambda)
+        # Create Lambda OAuth Callback
+        oauth_callback_lambda = self._create_oauth_callback_lambda()
+
+        # Create API Gateway for Slack webhooks and OAuth callback
+        api = self._create_api_gateway(receiver_lambda, oauth_callback_lambda)
+
+        # Store OAuth callback URL for other stacks
+        self.oauth_callback_url = f"{api.url}oauth/callback"
 
         # Output important values
         self._create_outputs(api, slack_secret)
@@ -222,12 +229,99 @@ class SlackIntegrationStack(Stack):
 
         return receiver_lambda
 
-    def _create_api_gateway(self, receiver_lambda: lambda_.DockerImageFunction) -> apigw.RestApi:
+    def _create_oauth_callback_lambda(self) -> lambda_.DockerImageFunction:
         """
-        Create API Gateway for Slack webhooks.
+        Create Lambda for OAuth2 callback handling.
+
+        This Lambda handles the OAuth2 callback redirect from AgentCore Identity
+        and calls CompleteResourceTokenAuth to complete the session binding flow.
+
+        Returns:
+            Lambda function
+        """
+        # Get oauth_callback code path
+        callback_code_path = (
+            Path(__file__).parent.parent / "interfaces" / "slack" / "oauth_callback"
+        )
+
+        # Create execution role for OAuth Callback Lambda
+        callback_role = iam.Role(
+            self,
+            "OAuthCallbackLambdaRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            description="Execution role for Mynion OAuth Callback Lambda",
+        )
+
+        # CloudWatch Logs permissions
+        callback_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name(
+                "service-role/AWSLambdaBasicExecutionRole"
+            )
+        )
+
+        # Permission to call CompleteResourceTokenAuth
+        callback_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="CompleteResourceTokenAuth",
+                actions=[
+                    "bedrock-agentcore:CompleteResourceTokenAuth",
+                ],
+                resources=[
+                    # workload-identity-directory/default is the resource accessed by CompleteResourceTokenAuth
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:workload-identity-directory/default",
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:workload-identity-directory/default/workload-identity/*",
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:token-vault/default",
+                    f"arn:aws:bedrock-agentcore:{Stack.of(self).region}:{Stack.of(self).account}:token-vault/default/oauth2credentialprovider/*",
+                ],
+            )
+        )
+
+        # Permission to read OAuth credential provider secrets
+        # CompleteResourceTokenAuth internally accesses the OAuth provider's client secret
+        callback_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="ReadOAuthCredentialProviderSecrets",
+                actions=[
+                    "secretsmanager:GetSecretValue",
+                ],
+                resources=[
+                    # AgentCore Identity stores OAuth credentials in secrets with this naming pattern
+                    f"arn:aws:secretsmanager:{Stack.of(self).region}:{Stack.of(self).account}:secret:bedrock-agentcore-identity!default/oauth2/*",
+                ],
+            )
+        )
+
+        # Create CloudWatch Log Group for OAuth Callback Lambda
+        callback_log_group = logs.LogGroup(
+            self,
+            "OAuthCallbackLambdaLogGroup",
+            retention=logs.RetentionDays.ONE_WEEK,
+        )
+
+        # Create Lambda function from Docker image (to include latest boto3)
+        oauth_callback_lambda = lambda_.DockerImageFunction(
+            self,
+            "OAuthCallbackLambda",
+            code=lambda_.DockerImageCode.from_image_asset(str(callback_code_path)),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            role=callback_role,
+            log_group=callback_log_group,
+        )
+
+        return oauth_callback_lambda
+
+    def _create_api_gateway(
+        self,
+        receiver_lambda: lambda_.DockerImageFunction,
+        oauth_callback_lambda: lambda_.DockerImageFunction,
+    ) -> apigw.RestApi:
+        """
+        Create API Gateway for Slack webhooks and OAuth callback.
 
         Args:
             receiver_lambda: Receiver Lambda to integrate with
+            oauth_callback_lambda: OAuth Callback Lambda to integrate with
 
         Returns:
             API Gateway REST API
@@ -272,6 +366,31 @@ class SlackIntegrationStack(Stack):
             ],
         )
 
+        # Create /oauth/callback endpoint for OAuth2 callback
+        oauth_resource = api.root.add_resource("oauth").add_resource("callback")
+
+        # Integrate with OAuth Callback Lambda
+        oauth_callback_integration = apigw.LambdaIntegration(
+            oauth_callback_lambda,
+            proxy=True,
+            integration_responses=[
+                apigw.IntegrationResponse(
+                    status_code="200",
+                )
+            ],
+        )
+
+        # Add GET method (AgentCore redirects with GET)
+        oauth_resource.add_method(
+            "GET",
+            oauth_callback_integration,
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                )
+            ],
+        )
+
         return api
 
     def _create_outputs(self, api: apigw.RestApi, slack_secret: secretsmanager.Secret):
@@ -296,4 +415,12 @@ class SlackIntegrationStack(Stack):
             value=slack_secret.secret_arn,
             description="ARN of Slack credentials secret (set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET)",
             export_name=f"{Stack.of(self).stack_name}-SlackSecretArn",
+        )
+
+        CfnOutput(
+            self,
+            "OAuthCallbackUrl",
+            value=f"{api.url}oauth/callback",
+            description="OAuth2 Callback URL (register in Workload Identity allowedResourceOauth2ReturnUrls)",
+            export_name=f"{Stack.of(self).stack_name}-OAuthCallbackUrl",
         )

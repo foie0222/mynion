@@ -47,9 +47,9 @@ dependencies = [
     "uvicorn[standard]>=0.38.0",
     "slack-bolt>=1.21.4",
     "boto3>=1.37.8",
-    "aws-cdk-lib>=2.224.0",
+    "aws-cdk-lib>=2.233.0",
     "constructs>=10.4.3",
-    "aws-cdk-aws-bedrock-agentcore-alpha==2.224.0a0",
+    "aws-cdk-aws-bedrock-agentcore-alpha>=2.233.0a0",
 ]
 ```
 
@@ -112,13 +112,32 @@ dependencies = [
 ### 認証・認可
 
 #### Gateway Inbound 認証
-- IAM 認証（SigV4 署名）
-- Agent の IAM ロールに Gateway 呼び出し権限を付与
+- CUSTOM_JWT 認証（Cognito OAuth トークン）
+- Cognito User Pool で `client_credentials` フローを使用
+- Agent が Secrets Manager から認証情報を取得し、Cognito からトークンを取得
 
-#### Google Calendar 認証
-- AgentCore Identity による OAuth2
-- USER_FEDERATION フローでユーザー同意を取得
-- Token Vault でトークンを管理
+#### Google Calendar 認証（OAuth2 Session Binding）
+
+AgentCore Identity の OAuth2 Credential Provider + **Session Binding** パターンを使用。
+
+| コンポーネント | 役割 |
+|---------------|------|
+| OAuth2 Credential Provider | Google OAuth2 クライアント設定を管理 |
+| Workload Identity | `allowedResourceOauth2ReturnUrls` で Callback URL を登録 |
+| Callback Lambda | Session Binding を完了（`CompleteResourceTokenAuth` 呼び出し） |
+| Token Vault | トークンを安全に保存・自動リフレッシュ |
+
+**Session Binding フロー:**
+1. Agent が `GetResourceOauth2Token` を呼び出し（`custom_state` に Slack user_id を含める）
+2. ユーザーが Google で認証
+3. Google → AgentCore Callback → 私たちの Callback Lambda にリダイレクト
+4. Callback Lambda が `CompleteResourceTokenAuth` を呼び出し
+5. Agent がポーリングでトークン取得
+
+**Session Binding の意義:**
+- 認証を開始したユーザーと完了したユーザーが同一であることを確認
+- Authorization URL が他人に転送されても、セッションがバインドされないため安全
+- AWS 公式推奨パターン（[OAuth2 Authorization URL Session Binding](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/oauth2-authorization-url-session-binding.html)）
 
 ### セキュリティ要件
 
@@ -128,6 +147,9 @@ dependencies = [
 | IAM 最小権限 | 必要最小限のポリシーのみ付与 |
 | 入力バリデーション | Pydantic によるスキーマ検証 |
 | ログ出力 | 機密情報をマスク |
+| OAuth Callback | Session Binding で認証セッションを検証 |
+| Callback URL | HTTPS のみ、Workload Identity に事前登録 |
+| セッション有効期限 | Authorization URL は 10 分で失効 |
 
 ## パフォーマンス要件
 

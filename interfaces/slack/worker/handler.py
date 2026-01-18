@@ -255,21 +255,9 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             input_text=user_message,
         )
 
-        # Extract agent response
-        logger.info(f"Agent result: {json.dumps(result, default=str)}")
-
-        if isinstance(result, str):
-            # Streaming response - already a string
-            agent_response = result if result else "応答がありませんでした。"
-        else:
-            # JSON response - extract text from nested structure:
-            # {"output": {"message": {"content": [{"text": "..."}]}}}
-            agent_response = (
-                result.get("output", {})
-                .get("message", {})
-                .get("content", [{}])[0]
-                .get("text", "応答がありませんでした。")
-            )
+        # agent_client returns extracted text (always string)
+        agent_response = result if result else "応答がありませんでした。"
+        logger.info(f"Agent response length: {len(agent_response)}")
 
         # Update the "thinking" message with actual response
         slack_client.update_message(

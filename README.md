@@ -80,8 +80,8 @@ uv run pre-commit install
 
 ```json
 {
-  "mynion:googleCredentialProvider": "YourCredentialProviderName",
-  "mynion:googleOauthCallbackUrl": "https://your-callback-url"
+  "mynion:googleCredentialProvider": "YourGoogleCredentialProviderName",
+  "mynion:googleOauthCallbackUrl": "https://bedrock-agentcore.ap-northeast-1.amazonaws.com/identities/oauth2/callback/your-callback-id"
 }
 ```
 
